@@ -1,0 +1,14 @@
+virtual I2C over rpmsg
+----------------------
+
+Required properties:
+- compatible: Must be "i2c-rpbus"
+- proc-id: id name of the rpmsg_i2c instance
+
+Example:
+
+	rpmsg-i2C {
+		compatible = "i2c-rpbus";
+		proc-id = "rpmsg_i2c";
+		status = "okay";
+	};

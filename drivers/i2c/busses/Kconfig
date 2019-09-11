@@ -1359,4 +1359,13 @@ config I2C_FSI
 	  This driver can also be built as a module. If so, the module will be
 	  called as i2c-fsi.
 
+config RPMSG_I2C
+	tristate "RPMSG i2c driver"
+	depends on RPMSG
+	help
+	  Say y here to export rpmsg endpoints as I2C Bus,
+
+	  This makes it possible for user-space programs to send and receive
+	  rpmsg messages as a standard i2c protocol.
+
 endmenu
