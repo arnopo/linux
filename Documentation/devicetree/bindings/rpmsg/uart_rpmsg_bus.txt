@@ -1,0 +1,25 @@
+RPMsg Uart bus
+--------------
+
+This binding provides support for the RPMsg over UART bus.
+
+
+Required properties:
+- compatible: Must be "uart-rpmsg-bus"
+
+Optional Properties:
+- max-speed:  The maximum baud rate the device operates at. This valure should
+		  only be present if the maximum is less than the slave device
+  		  can support.
+
+Example:
+
+/* Uart test */
+&uart7 {
+	status = "okay";
+	rpmsg_uart{
+		compatible = "uart-rpmsg-bus";
+		max-speed = <19200>;
+	};
+};
+
