@@ -95,6 +95,12 @@
 };
 
 
+&m4_i2c5 {
+	pinctrl-names = "rproc_default";
+	pinctrl-0 = <&i2c5_pins_a>;
+	status = "okay";
+};
+
 &m4_timers2 {
 	pinctrl-names = "rproc_default";
 	status = "okay";
