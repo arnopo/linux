@@ -90,6 +90,16 @@ config SRF08
 	  This driver can be used to measure the distance of objects.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called srf08.
+
+config VL53L0X_RPMSG
+	tristate "STMicroelectronics VL53L0X ToF ranger sensor (RPMSG)"
+	depends on RPMSG
+	help
+	  Say Y here to build a driver for STMicroelectronics VL53L0X
+	  ToF ranger sensors with RPMSG interface.
+	  This driver can be used to measure the distance of objects.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called vl53l0x-rpmsg.
 
 endmenu
