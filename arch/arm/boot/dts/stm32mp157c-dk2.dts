@@ -143,3 +143,12 @@
 		max-speed = <3000000>;
 	};
 };
+
+/* Uart test */
+&uart7 {
+	status = "okay";
+	stm32f4_uart{
+		compatible = "uart-rpmsg-bus";
+		max-speed = <19200>;
+	};
+};

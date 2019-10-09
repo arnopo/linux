@@ -106,25 +106,7 @@
 	status = "okay";
 };
 
-&m4_uart7 {
-	pinctrl-names = "rproc_default";
-	pinctrl-0 = <&uart7_pins>;
-	status = "okay";
-};
-
 &pinctrl {
-	uart7_pins: uart7-test-0 {
-		pins1 {
-			pinmux = <STM32_PINMUX('E', 8, AF7)>; /* UART7_TX */
-			bias-disable;
-			drive-push-pull;
-			slew-rate = <0>;
-		};
-		pins2 {
-			pinmux = <STM32_PINMUX('E', 7, AF7)>; /* UART7_RX */
-			bias-disable;
-		};
-	};
 
 	timer1_pins: pwm1-test-0 {
 		pins {
