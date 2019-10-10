@@ -71,4 +71,12 @@ config RPMSG_TTY
 	  This makes it possible for user-space programs to send and receive
 	  rpmsg messages as a standard tty protocol.
 
+config RPMSG_BUTTON
+	tristate "RPMSG input driver"
+	depends on RPMSG
+	help
+	  Say y here to export rpmsg endpoints as tty console, usually found
+	  in /dev.
+	  This makes it possible for user-space programs register on event.
+
 endmenu

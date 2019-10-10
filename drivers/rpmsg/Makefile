@@ -9,3 +9,4 @@ obj-$(CONFIG_RPMSG_TTY)	+= rpmsg_tty.o
 obj-$(CONFIG_RPMSG) += rpmsg_bus_common.o
 obj-$(CONFIG_RPMSG_VIRTIO)	+= virtio_rpmsg_bus.o
 obj-$(CONFIG_RPMSG_UART)        += uart_rpmsg_bus.o
+obj-$(CONFIG_RPMSG_BUTTON)        += rpmsg_button.o
