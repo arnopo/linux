@@ -2016,6 +2016,12 @@
 		};
 	};
 
+	rpmsg-i2C {
+		compatible = "i2c-rpbus";
+		proc-id = "rpmsg_i2c";
+		status = "okay";
+	};
+
 	firmware {
 		optee {
 			compatible = "linaro,optee-tz";
