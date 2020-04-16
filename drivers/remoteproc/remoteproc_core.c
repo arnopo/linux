@@ -2323,6 +2323,30 @@ int devm_rproc_add(struct device *dev, struct rproc *rproc)
 EXPORT_SYMBOL(devm_rproc_add);
 
 /**
+ * rproc_pa_to_da() - memory translation from local physical address to
+ * remote device address
+ * @rproc: the remote processor handle to register
+ * @pa: local physical address
+ * @da: remote device address
+ *
+ * Return the device address associated to the physical address
+ * The translation is delegated to the platform driver if the ops is
+ * implemented. By default this function returns the physical address.
+ *
+ * Returns 0 on success and an appropriate error code otherwise.
+ */
+int rproc_pa_to_da(struct rproc *rproc, phys_addr_t pa, u64 *da)
+{
+	if (!rproc->ops->pa_to_da) {
+		*da = pa;
+		return 0;
+	}
+
+	return rproc->ops->pa_to_da(rproc, pa, da);
+}
+EXPORT_SYMBOL(rproc_pa_to_da);
+
+/**
  * rproc_type_release() - release a remote processor instance
  * @dev: the rproc's device
  *
