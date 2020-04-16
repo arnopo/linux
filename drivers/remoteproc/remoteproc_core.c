@@ -2085,10 +2085,10 @@ out:
 EXPORT_SYMBOL(rproc_detach);
 
 /**
- * rproc_get_by_phandle() - find a remote processor by phandle
- * @phandle: phandle to the rproc
+ * rproc_get_by_node() - find a remote processor by device node
+ * @np: device tree node
  *
- * Finds an rproc handle using the remote processor's phandle, and then
+ * Finds an rproc handle using the remote processor's node, and then
  * return a handle to the rproc.
  *
  * This function increments the remote processor's refcount, so always
@@ -2097,14 +2097,14 @@ EXPORT_SYMBOL(rproc_detach);
  * Return: rproc handle on success, and NULL on failure
  */
 #ifdef CONFIG_OF
-struct rproc *rproc_get_by_phandle(phandle phandle)
+struct rproc *rproc_get_by_node(struct device_node *np)
 {
 	struct rproc *rproc = NULL, *r;
-	struct device_node *np;
 
-	np = of_find_node_by_phandle(phandle);
 	if (!np)
 		return NULL;
+
+	of_node_get(np);
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(r, &rproc_list, node) {
@@ -2127,12 +2127,12 @@ struct rproc *rproc_get_by_phandle(phandle phandle)
 	return rproc;
 }
 #else
-struct rproc *rproc_get_by_phandle(phandle phandle)
+struct rproc *rproc_get_by_node(struct device_node *np)
 {
 	return NULL;
 }
 #endif
-EXPORT_SYMBOL(rproc_get_by_phandle);
+EXPORT_SYMBOL(rproc_get_by_node);
 
 /**
  * rproc_set_firmware() - assign a new firmware
