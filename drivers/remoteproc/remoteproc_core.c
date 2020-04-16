@@ -231,6 +231,56 @@ out:
 EXPORT_SYMBOL(rproc_da_to_va);
 
 /**
+ * rproc_default_mem_alloc() - Simple mmap of the memory
+ * @rproc: handle of a remote processor
+ * @mem: memory entry descriptor
+ *
+ * Memory allocator for  basic remote processors that do not need to manage
+ * specific memory allocation ( no MPU; no IOMMU, ....). In this case the
+ * memory is just mapped in in kernel space.
+ *
+ * Return: 0 on success else error
+ */
+int rproc_default_mem_alloc(struct rproc *rproc, struct rproc_mem_entry *mem)
+{
+	struct device *dev = rproc->dev.parent;
+	void *va;
+
+	dev_dbg(dev, "map memory: %pa+%x\n", &mem->dma, mem->len);
+	va = ioremap_wc(mem->dma, mem->len);
+	if (IS_ERR_OR_NULL(va)) {
+		dev_err(dev, "Unable to map memory region: %pa+%x\n",
+			&mem->dma, mem->len);
+		return -ENOMEM;
+	}
+
+	/* Update memory entry va */
+	mem->va = va;
+
+	return 0;
+}
+EXPORT_SYMBOL(rproc_default_mem_alloc);
+
+/**
+ * rproc_default_mem_release() - release of the mmaped memory
+ * @rproc: handle of a remote processor
+ * @mem: memory entry descriptor
+ *
+ * Memory release for  basic remote processors allocated by
+ * @rproc_default_mem_alloc
+ *
+ * Return: 0 on success else error
+ */
+int rproc_default_mem_release(struct rproc *rproc, struct rproc_mem_entry *mem)
+{
+	dev_dbg(rproc->dev.parent, "unmap memory: %pa\n", &mem->dma);
+	iounmap(mem->va);
+
+	return 0;
+}
+EXPORT_SYMBOL(rproc_default_mem_release);
+
+/**
  * rproc_find_carveout_by_name() - lookup the carveout region by a name
  * @rproc: handle of a remote processor
  * @name: carveout name to find (format string)
