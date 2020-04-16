@@ -335,6 +335,7 @@ struct rproc_mem_entry {
 	dma_addr_t dma;
 	size_t len;
 	u32 da;
+	struct device *dev;
 	void *priv;
 	char name[32];
 	struct list_head node;

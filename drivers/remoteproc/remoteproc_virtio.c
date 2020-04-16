@@ -436,7 +436,7 @@ static int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 		phys_addr_t pa;
 
 		if (mem->of_resm_idx != -1) {
-			struct device_node *np = rproc->dev.parent->of_node;
+			struct device_node *np = mem->dev->of_node;
 
 			/* Associate reserved memory to vdev device */
 			ret = of_reserved_mem_device_init_by_idx(dev, np,

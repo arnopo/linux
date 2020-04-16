@@ -953,6 +953,7 @@ rproc_mem_entry_init(struct device *dev,
 	if (!mem)
 		return mem;
 
+	mem->dev = dev;
 	mem->va = va;
 	mem->dma = dma;
 	mem->da = da;
@@ -1030,6 +1031,7 @@ rproc_of_resm_mem_entry_init(struct device *dev, u32 of_resm_idx, size_t len,
 	if (!mem)
 		return mem;
 
+	mem->dev = dev;
 	mem->da = da;
 	mem->len = len;
 	mem->rsc_offset = FW_RSC_ADDR_ANY;
