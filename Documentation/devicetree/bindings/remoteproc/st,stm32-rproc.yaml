@@ -16,7 +16,12 @@ maintainers:
 
 properties:
   compatible:
-    const: st,stm32mp1-m4
+    enum:
+      - st,stm32mp1-m4
+      - st,stm32mp1-m4-tee
+    description:
+      Use "st,stm32mp1-m4" for the Cortex-M4 coprocessor management by Linux
+      Use "st,stm32mp1-m4-tee" for the Cortex-M4 coprocessor management by OPTEE
 
   reg:
     description:
@@ -135,8 +140,28 @@ required:
   - compatible
   - reg
   - resets
-  - st,syscfg-holdboot
-  - st,syscfg-tz
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          enum:
+            - st,stm32mp1-m4
+    then:
+      required:
+        - memory-region
+        - st,syscfg-holdboot
+        - st,syscfg-tz
+        - resets
+  - if:
+      properties:
+        compatible:
+          enum:
+            - st,stm32mp1-m4-tee
+    then:
+      required:
+        - memory-region
+
 
 additionalProperties: false
 
@@ -148,6 +173,8 @@ examples:
       reg = <0x10000000 0x40000>,
             <0x30000000 0x40000>,
             <0x38000000 0x10000>;
+      memory-region = <&retram>, <&mcuram>, <&mcuram2>, <&vdev0vring0>,
+                      <&m_ipc_shm>, <&vdev0vring1>, <&vdev0buffer>;
       resets = <&rcc MCU_R>;
       st,syscfg-holdboot = <&rcc 0x10C 0x1>;
       st,syscfg-tz = <&rcc 0x000 0x1>;
