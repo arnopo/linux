@@ -574,6 +574,42 @@ void rproc_vdev_release(struct kref *ref)
 	rproc_rvdev_remove_device(rvdev);
 }
 
+/**
+ * rproc_virtio_register_device() - register a remoteproc virtio device
+ * @rproc: rproc handle to add the remoteproc virtio device to
+ * @vdev_data: platform device data
+ *
+ * Return: 0 on success, and an appropriate error value otherwise
+ */
+struct platform_device *
+rproc_virtio_register_device(struct rproc *rproc, struct rproc_vdev_data *vdev_data)
+{
+	struct device *dev = &rproc->dev;
+	struct platform_device *pdev;
+
+	pdev = platform_device_register_data(dev, "rproc-virtio", vdev_data->index, vdev_data,
+					     sizeof(*vdev_data));
+	if (PTR_ERR_OR_ZERO(pdev)) {
+		dev_err(rproc->dev.parent,
+			"failed to create rproc-virtio device\n");
+	}
+
+	return  pdev;
+}
+EXPORT_SYMBOL(rproc_virtio_register_device);
+
+/**
+ * rproc_virtio_unregister_device() - unregister a remoteproc virtio device
+ * @rvdev: remote proc virtio handle to unregister
+ *
+ */
+void rproc_virtio_unregister_device(struct rproc_vdev *rvdev)
+{
+	if (rvdev->pdev)
+		platform_device_unregister(rvdev->pdev);
+}
+EXPORT_SYMBOL(rproc_virtio_unregister_device);
+
 static int rproc_virtio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;

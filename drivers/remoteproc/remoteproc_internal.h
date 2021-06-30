@@ -39,10 +39,25 @@ int rproc_of_parse_firmware(struct device *dev, int index,
 #if IS_ENABLED(CONFIG_REMOTEPROC_VIRTIO)
 
 int rproc_rvdev_add_device(struct rproc_vdev *rvdev);
+struct platform_device *
+rproc_virtio_register_device(struct rproc *rproc, struct rproc_vdev_data *vdev_data);
+void rproc_virtio_unregister_device(struct rproc_vdev *rvdev);
 irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id);
 void rproc_vdev_release(struct kref *ref);
 
 #else
+
+static inline struct platform_device *
+rproc_virtio_register_device(struct rproc *rproc, struct rproc_vdev_data *vdev_data)
+{
+	return ERR_PTR(-ENXIO);
+}
+
+static inline void rproc_virtio_unregister_device(struct rproc_vdev *rvdev)
+{
+	/* This shouldn't be possible */
+	WARN_ON(1);
+}
 
 int rproc_rvdev_add_device(struct rproc_vdev *rvdev)
 {
