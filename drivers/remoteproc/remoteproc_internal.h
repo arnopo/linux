@@ -30,9 +30,37 @@ int rproc_of_parse_firmware(struct device *dev, int index,
 			    const char **fw_name);
 
 /* from remoteproc_virtio.c */
+#if IS_ENABLED(CONFIG_REMOTEPROC_VIRTIO)
+
 int rproc_rvdev_add_device(struct rproc_vdev *rvdev);
 irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id);
 void rproc_vdev_release(struct kref *ref);
+
+#else
+
+int rproc_rvdev_add_device(struct rproc_vdev *rvdev)
+{
+	/* This shouldn't be possible */
+	WARN_ON(1);
+
+	return -ENXIO;
+}
+
+static inline irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id)
+{
+	/* This shouldn't be possible */
+	WARN_ON(1);
+
+	return IRQ_NONE;
+}
+
+static inline void rproc_vdev_release(struct kref *ref)
+{
+	/* This shouldn't be possible */
+	WARN_ON(1);
+}
+
+#endif
 
 /* from remoteproc_debugfs.c */
 void rproc_remove_trace_file(struct dentry *tfile);

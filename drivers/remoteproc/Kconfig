@@ -6,13 +6,22 @@ config REMOTEPROC
 	depends on HAS_DMA
 	select CRC32
 	select FW_LOADER
-	select VIRTIO
+	select REMOTEPROC_VIRTIO
 	select WANT_DEV_COREDUMP
 	help
 	  Support for remote processors (such as DSP coprocessors). These
 	  are mainly used on embedded systems.
 
 if REMOTEPROC
+
+config REMOTEPROC_VIRTIO
+	bool "Remoteproc virtio device "
+	select VIRTIO
+	help
+	  Say y here to have a virtio device support for the remoteproc
+	  communication.
+
+	  It's safe to say N if you don't use the virtio for the IPC.
 
 config REMOTEPROC_CDEV
 	bool "Remoteproc character device interface"
