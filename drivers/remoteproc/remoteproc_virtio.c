@@ -29,7 +29,11 @@
 
 static struct rproc_vdev *vdev_to_rvdev(struct virtio_device *vdev)
 {
-	return container_of(vdev->dev.parent, struct rproc_vdev, dev);
+	struct platform_device *pdev;
+
+	pdev = container_of(vdev->dev.parent, struct platform_device, dev);
+
+	return platform_get_drvdata(pdev);
 }
 
 static  struct rproc *vdev_to_rproc(struct virtio_device *vdev)
@@ -343,13 +347,10 @@ static void rproc_virtio_dev_release(struct device *dev)
 {
 	struct virtio_device *vdev = dev_to_virtio(dev);
 	struct rproc_vdev *rvdev = vdev_to_rvdev(vdev);
-	struct rproc *rproc = vdev_to_rproc(vdev);
 
 	kfree(vdev);
 
-	kref_put(&rvdev->refcount, rproc_vdev_release);
-
-	put_device(&rproc->dev);
+	put_device(&rvdev->pdev->dev);
 }
 
 /**
@@ -365,7 +366,7 @@ static void rproc_virtio_dev_release(struct device *dev)
 static int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 {
 	struct rproc *rproc = rvdev->rproc;
-	struct device *dev = &rvdev->dev;
+	struct device *dev = &rvdev->pdev->dev;
 	struct virtio_device *vdev;
 	struct rproc_mem_entry *mem;
 	int ret;
@@ -436,17 +437,15 @@ static int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 	vdev->dev.release = rproc_virtio_dev_release;
 
 	/*
-	 * We're indirectly making a non-temporary copy of the rproc pointer
+	 * We're indirectly making a non-temporary copy of the rvdev pointer
 	 * here, because drivers probed with this vdev will indirectly
 	 * access the wrapping rproc.
 	 *
-	 * Therefore we must increment the rproc refcount here, and decrement
+	 * Therefore we must increment the rvdev refcount here, and decrement
 	 * it _only_ when the vdev is released.
 	 */
-	get_device(&rproc->dev);
+	get_device(dev);
 
-	/* Reference the vdev and vring allocations */
-	kref_get(&rvdev->refcount);
 
 	ret = register_virtio_device(vdev);
 	if (ret) {
@@ -488,57 +487,33 @@ static int rproc_vdev_do_start(struct rproc_subdev *subdev)
 static void rproc_vdev_do_stop(struct rproc_subdev *subdev, bool crashed)
 {
 	struct rproc_vdev *rvdev = container_of(subdev, struct rproc_vdev, subdev);
+	struct device *dev = &rvdev->pdev->dev;
 	int ret;
 
-	ret = device_for_each_child(&rvdev->dev, NULL, rproc_remove_virtio_dev);
+	ret = device_for_each_child(dev, NULL, rproc_remove_virtio_dev);
 	if (ret)
-		dev_warn(&rvdev->dev, "can't remove vdev child device: %d\n", ret);
+		dev_warn(dev, "can't remove vdev child device: %d\n", ret);
 }
 
-/**
- * rproc_rvdev_release() - release the existence of a rvdev
- *
- * @dev: the subdevice's dev
- */
-static void rproc_rvdev_release(struct device *dev)
-{
-	struct rproc_vdev *rvdev = container_of(dev, struct rproc_vdev, dev);
-
-	of_reserved_mem_device_release(dev);
-
-	kfree(rvdev);
-}
-
-int rproc_rvdev_add_device(struct rproc_vdev *rvdev)
+static int rproc_rvdev_add_device(struct rproc_vdev *rvdev)
 {
 	struct rproc *rproc = rvdev->rproc;
-	char name[16];
+	struct device *dev = &rvdev->pdev->dev;
 	int ret;
 
-	snprintf(name, sizeof(name), "vdev%dbuffer", rvdev->index);
-	rvdev->dev.parent = &rproc->dev;
-	ret = copy_dma_range_map(&rvdev->dev, rproc->dev.parent);
+	ret = copy_dma_range_map(dev, rproc->dev.parent);
 	if (ret)
 		return ret;
 
-	rvdev->dev.release = rproc_rvdev_release;
-	dev_set_name(&rvdev->dev, "%s#%s", dev_name(rvdev->dev.parent), name);
-	dev_set_drvdata(&rvdev->dev, rvdev);
 
-	ret = device_register(&rvdev->dev);
-	if (ret) {
-		put_device(&rvdev->dev);
-		return ret;
-	}
 	/* Make device dma capable by inheriting from parent's capabilities */
-	set_dma_ops(&rvdev->dev, get_dma_ops(rproc->dev.parent));
+	set_dma_ops(dev, get_dma_ops(rproc->dev.parent));
 
-	ret = dma_coerce_mask_and_coherent(&rvdev->dev,
-					   dma_get_mask(rproc->dev.parent));
+	ret = dma_coerce_mask_and_coherent(dev, dma_get_mask(rproc->dev.parent));
 	if (ret) {
-		dev_warn(&rvdev->dev,
-			 "Failed to set DMA mask %llx. Trying to continue... %x\n",
+		dev_warn(dev, "Failed to set DMA mask %llx. Trying to continue... %x\n",
 			 dma_get_mask(rproc->dev.parent), ret);
+		return ret;
 	}
 
 	rproc_register_rvdev(rvdev);
@@ -548,30 +523,9 @@ int rproc_rvdev_add_device(struct rproc_vdev *rvdev)
 
 	rproc_add_subdev(rproc, &rvdev->subdev);
 
+	dev_dbg(dev, "virtio dev %d added\n",  rvdev->index);
+
 	return 0;
-}
-
-static void rproc_rvdev_remove_device(struct rproc_vdev *rvdev)
-{
-	struct rproc *rproc = rvdev->rproc;
-
-	rproc_remove_subdev(rproc, &rvdev->subdev);
-	rproc_unregister_rvdev(rvdev);
-	device_unregister(&rvdev->dev);
-}
-
-void rproc_vdev_release(struct kref *ref)
-{
-	struct rproc_vdev *rvdev = container_of(ref, struct rproc_vdev, refcount);
-	struct rproc_vring *rvring;
-	int id;
-
-	for (id = 0; id < ARRAY_SIZE(rvdev->vring); id++) {
-		rvring = &rvdev->vring[id];
-		rproc_free_vring(rvring);
-	}
-
-	rproc_rvdev_remove_device(rvdev);
 }
 
 /**
@@ -590,8 +544,7 @@ rproc_virtio_register_device(struct rproc *rproc, struct rproc_vdev_data *vdev_d
 	pdev = platform_device_register_data(dev, "rproc-virtio", vdev_data->index, vdev_data,
 					     sizeof(*vdev_data));
 	if (PTR_ERR_OR_ZERO(pdev)) {
-		dev_err(rproc->dev.parent,
-			"failed to create rproc-virtio device\n");
+		dev_err(rproc->dev.parent, "failed to create rproc-virtio device\n");
 	}
 
 	return  pdev;

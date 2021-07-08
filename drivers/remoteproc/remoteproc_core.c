@@ -467,6 +467,8 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 {
 	struct fw_rsc_vdev *rsc = ptr;
 	struct device *dev = &rproc->dev;
+	struct rproc_vdev_data vdev_data;
+	struct platform_device *pdev;
 	struct rproc_vdev *rvdev;
 	int i, ret;
 
@@ -486,23 +488,24 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 	dev_dbg(dev, "vdev rsc: id %d, dfeatures 0x%x, cfg len %d, %d vrings\n",
 		rsc->id, rsc->dfeatures, rsc->config_len, rsc->num_of_vrings);
 
-	/* we currently support only two vrings per rvdev */
-	if (rsc->num_of_vrings > ARRAY_SIZE(rvdev->vring)) {
-		dev_err(dev, "too many vrings: %d\n", rsc->num_of_vrings);
-		return -EINVAL;
+	/* platform data of the new rvdev platform */
+	vdev_data.rsc_offset = offset;
+	vdev_data.id  = rsc->id;
+	vdev_data.index  = rproc->nb_vdev;
+
+	pdev = rproc_virtio_register_device(rproc, &vdev_data);
+	if (PTR_ERR_OR_ZERO(pdev)) {
+		dev_err(rproc->dev.parent,
+			"failed to create rproc-virtio device\n");
+		return PTR_ERR_OR_ZERO(pdev);
 	}
 
-	rvdev = kzalloc(sizeof(*rvdev), GFP_KERNEL);
-	if (!rvdev)
-		return -ENOMEM;
-
-	kref_init(&rvdev->refcount);
-
-	rvdev->id = rsc->id;
-	rvdev->rproc = rproc;
-	rvdev->index = rproc->nb_vdev;
-
-	ret = rproc_rvdev_add_device(rvdev);
+	/* If we made it to this point the remote proc virtio platform at been probed */
+	rvdev = platform_get_drvdata(pdev);
+	if (WARN_ON(!rvdev)) {
+		ret = -EINVAL;
+		goto free_rvdev;
+	}
 
 	rproc->nb_vdev++;
 
@@ -511,15 +514,19 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 		goto free_rvdev;
 
 
+	/* we currently support only two vrings per rvdev */
+	if (rsc->num_of_vrings > ARRAY_SIZE(rvdev->vring)) {
+		dev_err(dev, "too many vrings: %d\n", rsc->num_of_vrings);
+		ret = -EINVAL;
+		goto free_rvdev;
+	}
+
 	/* parse the vrings */
 	for (i = 0; i < rsc->num_of_vrings; i++) {
 		ret = rproc_parse_vring(rvdev, rsc, i);
 		if (ret)
 			goto free_rvdev;
 	}
-
-	/* remember the resource offset*/
-	rvdev->rsc_offset = offset;
 
 	/* allocate the vring resources */
 	for (i = 0; i < rsc->num_of_vrings; i++) {
@@ -534,7 +541,7 @@ unwind_vring_allocations:
 	for (i--; i >= 0; i--)
 		rproc_free_vring(&rvdev->vring[i]);
 free_rvdev:
-	device_unregister(&rvdev->dev);
+	rproc_virtio_unregister_device(rvdev);
 	return ret;
 }
 
@@ -1273,7 +1280,7 @@ void rproc_resource_cleanup(struct rproc *rproc)
 
 	/* clean up remote vdev entries */
 	list_for_each_entry_safe(rvdev, rvtmp, &rproc->rvdevs, node)
-		kref_put(&rvdev->refcount, rproc_vdev_release);
+		rproc_virtio_unregister_device(rvdev);
 
 	rproc_coredump_cleanup(rproc);
 }
