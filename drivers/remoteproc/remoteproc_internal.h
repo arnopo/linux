@@ -26,14 +26,13 @@ struct rproc_debug_trace {
 
 /* from remoteproc_core.c */
 void rproc_release(struct kref *kref);
-irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id);
-void rproc_vdev_release(struct kref *ref);
 int rproc_of_parse_firmware(struct device *dev, int index,
 			    const char **fw_name);
 
 /* from remoteproc_virtio.c */
-int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id);
-int rproc_remove_virtio_dev(struct device *dev, void *data);
+int rproc_rvdev_add_device(struct rproc_vdev *rvdev);
+irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id);
+void rproc_vdev_release(struct kref *ref);
 
 /* from remoteproc_debugfs.c */
 void rproc_remove_trace_file(struct dentry *tfile);
@@ -194,6 +193,18 @@ bool rproc_u64_fit_in_size_t(u64 val)
 		return true;
 
 	return (val <= (size_t) -1);
+}
+
+static inline void rproc_register_rvdev(struct rproc_vdev *rvdev)
+{
+	if (rvdev && rvdev->rproc)
+		list_add_tail(&rvdev->node, &rvdev->rproc->rvdevs);
+}
+
+static inline void rproc_unregister_rvdev(struct rproc_vdev *rvdev)
+{
+	if (rvdev)
+		list_del(&rvdev->node);
 }
 
 #endif /* REMOTEPROC_INTERNAL_H */
