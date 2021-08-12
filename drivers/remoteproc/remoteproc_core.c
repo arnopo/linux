@@ -28,6 +28,7 @@
 #include <linux/string.h>
 #include <linux/debugfs.h>
 #include <linux/rculist.h>
+#include <linux/of_platform.h>
 #include <linux/remoteproc.h>
 #include <linux/iommu.h>
 #include <linux/idr.h>
@@ -1856,6 +1857,31 @@ static void rproc_crash_handler_work(struct work_struct *work)
 	pm_relax(rproc->dev.parent);
 }
 
+static const struct of_device_id rproc_child_match_table[] = {
+	{ .compatible = "rproc-virtio", },
+	{ }
+};
+
+static int rproc_platform_populate(struct rproc *rproc)
+{
+	struct device *dev = rproc->dev.parent;
+	int ret;
+
+	ret = of_platform_populate(dev->of_node, rproc_child_match_table, NULL, dev);
+	if (ret < 0) {
+		dev_err(dev, "failed to populate child devices (%d)\n", ret);
+
+		goto depopulate;
+	}
+
+	return 0;
+
+depopulate:
+	of_platform_depopulate(dev);
+
+	return ret;
+}
+
 /**
  * rproc_boot() - boot a remote processor
  * @rproc: handle of a remote processor
@@ -2265,6 +2291,11 @@ int rproc_add(struct rproc *rproc)
 	list_add_rcu(&rproc->node, &rproc_list);
 	mutex_unlock(&rproc_list_mutex);
 
+	/* probe remoteproc device resource suppliers */
+	ret = rproc_platform_populate(rproc);
+	if (ret)
+		return ret;
+
 	return 0;
 
 rproc_remove_dev:
@@ -2536,6 +2567,8 @@ int rproc_del(struct rproc *rproc)
 
 	/* Ensure that no readers of rproc_list are still active */
 	synchronize_rcu();
+
+	of_platform_depopulate(rproc->dev.parent);
 
 	device_del(&rproc->dev);
 	rproc_char_device_remove(rproc);
