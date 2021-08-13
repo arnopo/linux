@@ -475,6 +475,16 @@
 	interrupt-parent = <&exti>;
 	interrupts = <68 1>;
 	status = "okay";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+	vdev_rpmsg: vdev@0 {
+		compatible = "virtio,rproc";
+		reg = <0>;
+		virtio,id = <7>;
+
+		status = "okay";
+	};
 };
 
 &pwr_regulators {
