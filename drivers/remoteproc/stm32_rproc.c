@@ -645,6 +645,8 @@ static const struct rproc_ops st_rproc_ops = {
 	.get_loaded_rsc_table = stm32_rproc_get_loaded_rsc_table,
 	.sanity_check	= rproc_elf_sanity_check,
 	.get_boot_addr	= rproc_elf_get_boot_addr,
+        .mem_alloc      = stm32_rproc_mem_alloc,
+        .mem_release    = stm32_rproc_mem_release,
 };
 
 static const struct of_device_id stm32_rproc_match[] = {
