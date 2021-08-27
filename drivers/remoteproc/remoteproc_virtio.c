@@ -540,6 +540,56 @@ static void rproc_vdev_do_stop(struct rproc_subdev *subdev, bool crashed)
 		dev_warn(dev, "can't remove vdev child device: %d\n", ret);
 }
 
+static int rproc_virtio_of_parse_mem(struct rproc_vdev *rvdev)
+{
+	struct device *dev = &rvdev->pdev->dev;
+	struct device_node *np = dev->of_node;
+	struct rproc *rproc = rvdev->rproc;
+	struct of_phandle_iterator it;
+	struct rproc_mem_entry *mem;
+	struct reserved_mem *rmem;
+	char name[32];
+	u64 da;
+	int index = 0;
+
+	/* Register associated reserved memory regions */
+	of_phandle_iterator_init(&it, np, "memory-region", NULL, 0);
+
+	while (of_phandle_iterator_next(&it) == 0) {
+		rmem = of_reserved_mem_lookup(it.node);
+		if (!rmem) {
+			dev_err(dev, "unable to acquire memory-region\n");
+			return -EINVAL;
+		}
+
+		if (rproc_pa_to_da(rproc, rmem->base, &da) < 0) {
+			dev_err(dev, "memory region not valid %pa\n",
+				&rmem->base);
+			return -EINVAL;
+		}
+
+		snprintf(name, sizeof(name), "vdev%dbuffer", rvdev->index);
+		if (strcmp(it.node->name, name)) {
+			/* Register memory region */
+			mem = rproc_platform_mem_entry_init(dev, rproc, NULL,
+							    (dma_addr_t)rmem->base,
+							    rmem->size, da, it.node->name);
+
+		} else {
+			/* Register reserved memory for vdev buffer alloc */
+			mem = rproc_of_resm_mem_entry_init(dev, index, rmem->size,
+							   rmem->base, it.node->name);
+		}
+
+		if (!mem)
+			return -ENOMEM;
+
+		rproc_add_carveout(rproc, mem);
+		index++;
+	}
+	return 0;
+}
+
 static int rproc_virtio_bind(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int rsc_offset)
 {
 	struct rproc *rproc = rvdev->rproc;
@@ -549,6 +599,10 @@ static int rproc_virtio_bind(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, 
 	rvdev->rsc_offset = rsc_offset;
 	rvdev->subdev.start = rproc_vdev_do_start;
 	rvdev->subdev.stop = rproc_vdev_do_stop;
+
+	ret = rproc_virtio_of_parse_mem(rvdev);
+	if (ret)
+		return ret;
 
 	/* parse the vrings */
 	for (id = 0; id < rsc->num_of_vrings; id++) {
@@ -660,6 +714,8 @@ static int rproc_virtio_probe(struct platform_device *pdev)
 		rvdev->index = rvdev_data->index;
 	}
 
+	rvdev->rproc = rproc;
+
 	ret = copy_dma_range_map(dev, rproc->dev.parent);
 	if (ret)
 		return ret;
@@ -675,7 +731,6 @@ static int rproc_virtio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rvdev);
 	rvdev->pdev = pdev;
-	rvdev->rproc = rproc;
 
 
 	rproc_add_rvdev(rproc, rvdev);
