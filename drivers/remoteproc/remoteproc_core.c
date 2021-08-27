@@ -971,6 +971,40 @@ rproc_mem_entry_init(struct device *dev,
 EXPORT_SYMBOL(rproc_mem_entry_init);
 
 /**
+ * rproc_platform_mem_entry_init() - allocate and initialize rproc_mem_entry struct
+ * @dev: pointer on device struct
+ * @rproc:  the remote processor handle
+ * @va: virtual address
+ * @dma: dma address
+ * @len: memory carveout length
+ * @da: device address
+ * @name: carveout name
+ *
+ * This function allocates a rproc_mem_entry struct and fill it with parameters
+ * provided by client. the allocation and the release of the memory will be delegated to the
+ * remoteproc platform driver.
+ *
+ * Return: a valid pointer on success, or NULL on failure
+ */
+struct rproc_mem_entry *
+rproc_platform_mem_entry_init(struct device *dev, struct rproc *rproc, void *va,
+			      dma_addr_t dma, size_t len, u32 da, const char *name, ...)
+{
+	struct rproc_mem_entry *mem;
+	va_list args;
+
+	if (!rproc->ops->mem_alloc || !rproc->ops->mem_release)
+		return NULL;
+
+	va_start(args, name);
+	mem = rproc_mem_entry_init(dev, va, dma, len, da, rproc->ops->mem_alloc,
+				   rproc->ops->mem_release, name, args);
+	va_end(args);
+
+	return mem;
+}
+
+/**
  * rproc_of_resm_mem_entry_init() - allocate and initialize rproc_mem_entry struct
  * from a reserved memory phandle
  * @dev: pointer on device struct

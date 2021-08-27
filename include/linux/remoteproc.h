@@ -682,6 +682,10 @@ rproc_mem_entry_init(struct device *dev,
 		     const char *name, ...);
 
 struct rproc_mem_entry *
+rproc_platform_mem_entry_init(struct device *dev, struct rproc *rproc, void *va,
+			      dma_addr_t dma, size_t len, u32 da, const char *name, ...);
+
+struct rproc_mem_entry *
 rproc_of_resm_mem_entry_init(struct device *dev, u32 of_resm_idx, size_t len,
 			     u32 da, const char *name, ...);
 
