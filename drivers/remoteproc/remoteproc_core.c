@@ -482,6 +482,7 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 	size_t rsc_size;
 	struct rproc_vdev_data rvdev_data;
 	struct platform_device *pdev;
+	int ret;
 
 	/* make sure resource isn't truncated */
 	rsc_size = struct_size(rsc, vring, rsc->num_of_vrings);
@@ -507,8 +508,6 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 
 	rvdev_data.id = rsc->id;
 	rvdev_data.index = rproc->nb_vdev++;
-	rvdev_data.rsc_offset = offset;
-	rvdev_data.rsc = rsc;
 
 	pdev = platform_device_register_data(dev, "rproc-virtio", rvdev_data.index, &rvdev_data,
 					     sizeof(rvdev_data));
@@ -517,7 +516,25 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 		return PTR_ERR(pdev);
 	}
 
+	/*
+	 * At this point the registered remoteproc virtio platform device should have been probed.
+	 * Get the associated rproc_vdev struct to assign the vrings.
+	 */
+	rvdev = platform_get_drvdata(pdev);
+	if (!rvdev) {
+		ret = -EINVAL;
+		goto free_rvdev;
+	}
+
+	ret = rvdev->bind(rvdev, rsc, offset);
+	if (ret)
+		goto free_rvdev;
+
 	return 0;
+
+free_rvdev:
+	platform_device_unregister(pdev);
+	return ret;
 }
 
 /**
@@ -1250,8 +1267,10 @@ void rproc_resource_cleanup(struct rproc *rproc)
 	}
 
 	/* clean up remote vdev entries */
-	list_for_each_entry_safe(rvdev, rvtmp, &rproc->rvdevs, node)
+	list_for_each_entry_safe(rvdev, rvtmp, &rproc->rvdevs, node) {
+		rvdev->unbind(rvdev);
 		platform_device_unregister(rvdev->pdev);
+	}
 
 	rproc_coredump_cleanup(rproc);
 }

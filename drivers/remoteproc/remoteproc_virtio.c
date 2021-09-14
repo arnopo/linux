@@ -488,14 +488,85 @@ static void rproc_vdev_do_stop(struct rproc_subdev *subdev, bool crashed)
 		dev_warn(dev, "can't remove vdev child device: %d\n", ret);
 }
 
+static int rproc_virtio_bind(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int rsc_offset)
+{
+	struct rproc *rproc = rvdev->rproc;
+	struct device *dev = &rvdev->pdev->dev;
+	int id, ret;
+
+	rvdev->rsc_offset = rsc_offset;
+	rvdev->subdev.start = rproc_vdev_do_start;
+	rvdev->subdev.stop = rproc_vdev_do_stop;
+
+	/* parse the vrings */
+	for (id = 0; id < rsc->num_of_vrings; id++) {
+		ret = rproc_parse_vring(rvdev, rsc, id);
+		if (ret)
+			return ret;
+	}
+
+	/* remember the resource offset*/
+	rvdev->rsc_offset = rsc_offset;
+
+	/* allocate the vring resources */
+	for (id = 0; id < rsc->num_of_vrings; id++) {
+		ret = rproc_alloc_vring(rvdev, id);
+		if (ret)
+			goto unwind_vring_allocations;
+	}
+
+	rproc_add_subdev(rproc, &rvdev->subdev);
+
+	/*
+	 * We're indirectly making a non-temporary copy of the rproc pointer
+	 * here, because the platform devicer or the vdev device will indirectly
+	 * access the wrapping rproc.
+	 *
+	 * Therefore we must increment the rproc refcount here, and decrement
+	 * it _only_ on platform remove.
+	 */
+	get_device(&rproc->dev);
+
+	rvdev->bound = 1;
+
+	dev_dbg(dev, "remote proc virtio dev %d bound\n",  rvdev->index);
+
+	return 0;
+
+unwind_vring_allocations:
+	for (id--; id >= 0; id--)
+		rproc_free_vring(&rvdev->vring[id]);
+	return ret;
+}
+
+static void rproc_virtio_unbind(struct rproc_vdev *rvdev)
+{
+	struct rproc *rproc = rvdev->rproc;
+	struct device *dev = &rvdev->pdev->dev;
+	int id;
+
+	if (!rvdev->bound)
+		return;
+
+	rproc_remove_subdev(rproc, &rvdev->subdev);
+	rvdev->bound = 0;
+
+	for (id = 0; id < ARRAY_SIZE(rvdev->vring); id++)
+		rproc_free_vring(&rvdev->vring[id]);
+
+	/* The remote proc device can be removed */
+	put_device(&rproc->dev);
+
+	dev_dbg(dev, "remote proc virtio dev %d unbound\n",  rvdev->index);
+}
+
 static int rproc_virtio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rproc_vdev_data *rvdev_data = dev->platform_data;
 	struct rproc_vdev *rvdev;
 	struct rproc *rproc = container_of(dev->parent, struct rproc, dev);
-	struct fw_rsc_vdev *rsc;
-	int i, ret;
+	int ret;
 
 	if (!rvdev_data)
 		return -EINVAL;
@@ -524,70 +595,27 @@ static int rproc_virtio_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, rvdev);
 	rvdev->pdev = pdev;
 
-	rsc = rvdev_data->rsc;
-
-	/* parse the vrings */
-	for (i = 0; i < rsc->num_of_vrings; i++) {
-		ret = rproc_parse_vring(rvdev, rsc, i);
-		if (ret)
-			return ret;
-	}
-
-	/* remember the resource offset*/
-	rvdev->rsc_offset = rvdev_data->rsc_offset;
-
-	/* allocate the vring resources */
-	for (i = 0; i < rsc->num_of_vrings; i++) {
-		ret = rproc_alloc_vring(rvdev, i);
-		if (ret)
-			goto unwind_vring_allocations;
-	}
 
 	rproc_add_rvdev(rproc, rvdev);
 
-	rvdev->subdev.start = rproc_vdev_do_start;
-	rvdev->subdev.stop = rproc_vdev_do_stop;
-
-	rproc_add_subdev(rproc, &rvdev->subdev);
-
-	/*
-	 * We're indirectly making a non-temporary copy of the rproc pointer
-	 * here, because the platform device or the vdev device will indirectly
-	 * access the wrapping rproc.
-	 *
-	 * Therefore we must increment the rproc refcount here, and decrement
-	 * it _only_ on platform remove.
-	 */
-	get_device(&rproc->dev);
+	rvdev->bind = rproc_virtio_bind;
+	rvdev->unbind = rproc_virtio_unbind;
 
 	return 0;
-
-unwind_vring_allocations:
-	for (i--; i >= 0; i--)
-		rproc_free_vring(&rvdev->vring[i]);
-
-	return ret;
 }
 
 static int rproc_virtio_remove(struct platform_device *pdev)
 {
 	struct rproc_vdev *rvdev = dev_get_drvdata(&pdev->dev);
-	struct rproc *rproc = rvdev->rproc;
-	struct rproc_vring *rvring;
-	int id;
 
-	for (id = 0; id < ARRAY_SIZE(rvdev->vring); id++) {
-		rvring = &rvdev->vring[id];
-		rproc_free_vring(rvring);
-	}
+	if (rvdev->bound)
+		rproc_virtio_unbind(rvdev);
 
-	rproc_remove_subdev(rproc, &rvdev->subdev);
 	rproc_remove_rvdev(rvdev);
 
 	of_reserved_mem_device_release(&pdev->dev);
 	dma_release_coherent_memory(&pdev->dev);
 
-	put_device(&rproc->dev);
 
 	return 0;
 }

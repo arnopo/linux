@@ -624,6 +624,9 @@ struct rproc_vring {
  * @vring: the vrings for this vdev
  * @rsc_offset: offset of the vdev's resource entry
  * @index: vdev position versus other vdev declared in resource table
+ * @bind: bind the remoteproc virtio device with the resource declared in the resource table.
+ * @unbind: unbind the remoteproc virtio.
+ * @bound: set to true if bound with a virtio resource declared in the resource table
  */
 struct rproc_vdev {
 
@@ -636,6 +639,9 @@ struct rproc_vdev {
 	struct rproc_vring vring[RVDEV_NUM_VRINGS];
 	u32 rsc_offset;
 	u32 index;
+	int (*bind)(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int rsc_offset);
+	void (*unbind)(struct rproc_vdev *rvdev);
+	bool bound;
 };
 
 struct rproc *rproc_get_by_node(struct device_node *np);
