@@ -468,8 +468,7 @@
 };
 
 &m4_rproc {
-	memory-region = <&retram>, <&mcuram>, <&mcuram2>, <&vdev0vring0>,
-			<&vdev0vring1>, <&vdev0buffer>;
+	memory-region = <&retram>, <&mcuram>, <&mcuram2>;
 	mboxes = <&ipcc 0>, <&ipcc 1>, <&ipcc 2>, <&ipcc 3>;
 	mbox-names = "vq0", "vq1", "shutdown", "detach";
 	interrupt-parent = <&exti>;
@@ -482,6 +481,7 @@
 		compatible = "virtio,rproc";
 		reg = <0>;
 		virtio,id = <7>;
+		memory-region = <&vdev0vring0>, <&vdev0vring1>, <&vdev0buffer>;
 
 		status = "okay";
 	};
