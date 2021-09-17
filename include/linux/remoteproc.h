@@ -621,6 +621,7 @@ struct rproc_vring {
 	struct virtqueue *vq;
 };
 
+struct rproc_vdev_mbox;
 /**
  * struct rproc_vdev - remoteproc state for a supported virtio device
  * @subdev: handle for registering the vdev as a rproc subdevice
@@ -634,6 +635,9 @@ struct rproc_vring {
  * @bind: bind the remoteproc virtio device with the resource declared in the resource table.
  * @unbind: unbind the remoteproc virtio.
  * @bound: set to true if bound with a virtio resource declared in the resource table
+ * @mbox: set to true if bound with a virtio resource declared in the resource table
+ * @nb_mbox: number of mailbox associated for notification
+ * @mbox_wq: mailbox callback workqueue
  */
 struct rproc_vdev {
 
@@ -649,6 +653,9 @@ struct rproc_vdev {
 	int (*bind)(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int rsc_offset);
 	void (*unbind)(struct rproc_vdev *rvdev);
 	bool bound;
+	struct rproc_vdev_mbox *mbox;
+	unsigned int nb_mbox;
+	struct workqueue_struct *mbox_wq;
 };
 
 struct rproc *rproc_get_by_node(struct device_node *np);

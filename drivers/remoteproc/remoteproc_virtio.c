@@ -13,6 +13,7 @@
 #include <linux/dma-map-ops.h>
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
+#include <linux/mailbox_client.h>
 #include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/remoteproc.h>
@@ -23,8 +24,17 @@
 #include <linux/err.h>
 #include <linux/kref.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 
 #include "remoteproc_internal.h"
+
+struct rproc_vdev_mbox {
+	const unsigned char *name;
+	struct mbox_chan *chan;
+	struct mbox_client cl;
+	struct work_struct vq_work;
+	int notifyid;
+};
 
 static int copy_dma_range_map(struct device *to, struct device *from)
 {
@@ -65,12 +75,29 @@ static  struct rproc *vdev_to_rproc(struct virtio_device *vdev)
 static bool rproc_virtio_notify(struct virtqueue *vq)
 {
 	struct rproc_vring *rvring = vq->priv;
-	struct rproc *rproc = rvring->rvdev->rproc;
+	struct rproc_vdev *rvdev = rvring->rvdev;
+	struct rproc *rproc = rvdev->rproc;
 	int notifyid = rvring->notifyid;
+	unsigned int i;
+	int err;
 
 	dev_dbg(&rproc->dev, "kicking vq index: %d\n", notifyid);
 
-	rproc->ops->kick(rproc, notifyid);
+	if (rvdev->mbox) {
+		dev_dbg(&rproc->dev, "nb mbox: %d\n", rvdev->nb_mbox);
+		for (i = 0; i < rvdev->nb_mbox; i++) {
+			if (notifyid != rvdev->mbox[i].notifyid)
+				continue;
+			dev_dbg(&rproc->dev, "mbox: %s\n", rvdev->mbox[i].name);
+			err = mbox_send_message(rvdev->mbox[i].chan, &rvdev->mbox[i].notifyid);
+			if (err < 0)
+				dev_err(&rproc->dev, "%s: failed (%s, err:%d)\n",
+					__func__, rvdev->mbox[i].name, err);
+		}
+	} else {
+		rproc->ops->kick(rproc, notifyid);
+	}
+
 	return true;
 }
 
@@ -424,7 +451,7 @@ static int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 	struct rproc_mem_entry *mem;
 	int ret;
 
-	if (rproc->ops->kick == NULL) {
+	if (!rproc->ops->kick && !rvdev->mbox) {
 		ret = -EINVAL;
 		dev_err(dev, ".kick method not defined for %s\n", rproc->name);
 		goto out;
@@ -475,6 +502,7 @@ static int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 		 * the allocations will fall back to global pools, so don't
 		 * check return value either.
 		 */
+		dev_err(dev, "use parent memory!!!!!\n");
 		of_reserved_mem_device_init_by_idx(dev, np, 0);
 	}
 
@@ -619,6 +647,9 @@ static int rproc_virtio_bind(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, 
 		ret = rproc_alloc_vring(rvdev, id);
 		if (ret)
 			goto unwind_vring_allocations;
+		if (rvdev->mbox)
+			if (id < rvdev->nb_mbox)
+				rvdev->mbox[id].notifyid = rvdev->vring[id].notifyid;
 	}
 
 	rproc_add_subdev(rproc, &rvdev->subdev);
@@ -640,8 +671,12 @@ static int rproc_virtio_bind(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, 
 	return 0;
 
 unwind_vring_allocations:
-	for (id--; id >= 0; id--)
+	for (id--; id >= 0; id--) {
 		rproc_free_vring(&rvdev->vring[id]);
+		if (rvdev->mbox)
+			if (id < rvdev->nb_mbox)
+				rvdev->mbox[id].notifyid = -1;
+	}
 	return ret;
 }
 
@@ -657,18 +692,57 @@ static void rproc_virtio_unbind(struct rproc_vdev *rvdev)
 	rproc_remove_subdev(rproc, &rvdev->subdev);
 	rvdev->bound = 0;
 
-	for (id = 0; id < ARRAY_SIZE(rvdev->vring); id++)
+	for (id = 0; id < ARRAY_SIZE(rvdev->vring); id++) {
 		rproc_free_vring(&rvdev->vring[id]);
-
+		if (rvdev->mbox)
+			if (id < rvdev->nb_mbox)
+				rvdev->mbox[id].notifyid = -1;
+	}
 	/* The remote proc device can be removed */
 	put_device(&rproc->dev);
 
 	dev_dbg(dev, "remote proc virtio dev %d unbound\n",  rvdev->index);
 }
 
+static void rproc_virtio_mb_vq_work(struct work_struct *work)
+{
+	struct rproc_vdev_mbox *mb = container_of(work, struct rproc_vdev_mbox, vq_work);
+	struct rproc_vdev *rvdev = dev_get_drvdata(mb->cl.dev);
+	struct rproc *rproc = rvdev->rproc;
+
+	if (rproc_vq_interrupt(rproc, mb->notifyid) == IRQ_NONE)
+		dev_dbg(&rproc->dev, "no message found in vq\n");
+}
+
+static void rproc_virtio_mb_callback(struct mbox_client *cl, void *data)
+{
+	struct rproc_vdev *rvdev = dev_get_drvdata(cl->dev);
+	struct rproc_vdev_mbox *mb = container_of(cl, struct rproc_vdev_mbox, cl);
+
+	queue_work(rvdev->mbox_wq, &mb->vq_work);
+}
+
+static void rproc_virtio_free_mbox(struct rproc_vdev *rvdev)
+{
+	unsigned int i;
+
+	for (i = 0; i < rvdev->nb_mbox; i++) {
+		if (rvdev->mbox[i].chan)
+			mbox_free_channel(rvdev->mbox[i].chan);
+		rvdev->mbox[i].chan = NULL;
+	}
+}
+
+const struct mbox_client rproc_virtio_client = {
+	.rx_callback = rproc_virtio_mb_callback,
+	.tx_block = false,
+};
+
 static int rproc_virtio_of_parse(struct device *dev, struct rproc_vdev *rvdev)
 {
 	struct device_node *np = dev->of_node;
+	struct rproc_vdev_mbox *mbox;
+	int ret, i;
 
 	/* The reg is used to specify the vdev index */
 	if (of_property_read_u32(np, "reg", &rvdev->index))
@@ -678,7 +752,57 @@ static int rproc_virtio_of_parse(struct device *dev, struct rproc_vdev *rvdev)
 	if (of_property_read_u32(np, "virtio,id", &rvdev->id))
 		return -EINVAL;
 
+	/* check for the mailboxes */
+
+	/* Register associated reserved memory regions */
+	rvdev->nb_mbox = of_count_phandle_with_args(np, "mboxes", "#mbox-cells");
+
+	dev_dbg(dev, "%pOF: nb mailbox found: %d\n", np, rvdev->nb_mbox);
+
+	if (rvdev->nb_mbox == -ENOENT)
+		return 0;
+
+	rvdev->mbox = devm_kcalloc(dev, rvdev->nb_mbox, sizeof(struct rproc_vdev_mbox),
+				   GFP_KERNEL);
+	if (!rvdev->mbox)
+		return -ENOMEM;
+
+	rvdev->mbox_wq = create_workqueue(dev_name(dev));
+	if (!rvdev->mbox_wq) {
+		dev_err(dev, "cannot create workqueue\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < rvdev->nb_mbox; i++) {
+		mbox = &rvdev->mbox[i];
+		mbox->name = devm_kasprintf(dev, GFP_KERNEL, "vq%d", i);
+
+		mbox->cl = rproc_virtio_client;
+		mbox->cl.dev = dev;
+
+		mbox->chan = mbox_request_channel_byname(&mbox->cl, mbox->name);
+		if (IS_ERR(mbox->chan)) {
+			dev_err_probe(dev->parent, PTR_ERR(mbox->chan),
+				      "failed to request mailbox %s\n", mbox->name);
+			ret = PTR_ERR(mbox->chan);
+			goto err_get_mbox;
+		}
+		/*
+		 * Create a workqueue as nothing prevent that rproc_virtio_mb_callback is called
+		 * under interrupt context.
+		 */
+		dev_dbg(dev, "%s: mailbox associated: %s\n", __func__, mbox->name);
+		INIT_WORK(&mbox->vq_work, rproc_virtio_mb_vq_work);
+		mbox->notifyid = -1;
+	}
+
 	return 0;
+
+err_get_mbox:
+	rproc_virtio_free_mbox(rvdev);
+	destroy_workqueue(rvdev->mbox_wq);
+
+	return ret;
 }
 
 static int rproc_virtio_probe(struct platform_device *pdev)
@@ -747,6 +871,12 @@ static int rproc_virtio_remove(struct platform_device *pdev)
 
 	if (rvdev->bound)
 		rproc_virtio_unbind(rvdev);
+
+	if (rvdev->nb_mbox)
+		rproc_virtio_free_mbox(rvdev);
+
+	if (rvdev->mbox_wq)
+		destroy_workqueue(rvdev->mbox_wq);
 
 	rproc_remove_rvdev(rvdev);
 
