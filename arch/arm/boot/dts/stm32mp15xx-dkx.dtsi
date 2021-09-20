@@ -469,8 +469,8 @@
 
 &m4_rproc {
 	memory-region = <&retram>, <&mcuram>, <&mcuram2>;
-	mboxes = <&ipcc 0>, <&ipcc 1>, <&ipcc 2>, <&ipcc 3>;
-	mbox-names = "vq0", "vq1", "shutdown", "detach";
+	mboxes = <&ipcc 2>, <&ipcc 3>;
+	mbox-names = "shutdown", "detach";
 	interrupt-parent = <&exti>;
 	interrupts = <68 1>;
 	status = "okay";
@@ -482,6 +482,8 @@
 		reg = <0>;
 		virtio,id = <7>;
 		memory-region = <&vdev0vring0>, <&vdev0vring1>, <&vdev0buffer>;
+		mboxes = <&ipcc 0>, <&ipcc 1>;
+		mbox-names = "vq0", "vq1";
 
 		status = "okay";
 	};
