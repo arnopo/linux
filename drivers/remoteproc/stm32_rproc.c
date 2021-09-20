@@ -27,16 +27,11 @@
 #define HOLD_BOOT		0
 #define RELEASE_BOOT		1
 
-#define MBOX_NB_VQ		2
-#define MBOX_NB_MBX		4
+#define MBOX_NB_MBX		2
 
 #define STM32_SMC_RCC		0x82001000
 #define STM32_SMC_REG_WRITE	0x1
 
-#define STM32_MBX_VQ0		"vq0"
-#define STM32_MBX_VQ0_ID	0
-#define STM32_MBX_VQ1		"vq1"
-#define STM32_MBX_VQ1_ID	1
 #define STM32_MBX_SHUTDOWN	"shutdown"
 #define STM32_MBX_DETACH	"detach"
 
@@ -87,7 +82,6 @@ struct stm32_rproc {
 	u32 nb_rmems;
 	struct stm32_rproc_mem *rmems;
 	struct stm32_mbox mb[MBOX_NB_MBX];
-	struct workqueue_struct *workqueue;
 	bool secured_soc;
 	void __iomem *rsc_va;
 };
@@ -282,24 +276,6 @@ static irqreturn_t stm32_rproc_wdg(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void stm32_rproc_mb_vq_work(struct work_struct *work)
-{
-	struct stm32_mbox *mb = container_of(work, struct stm32_mbox, vq_work);
-	struct rproc *rproc = dev_get_drvdata(mb->client.dev);
-
-	if (rproc_vq_interrupt(rproc, mb->vq_id) == IRQ_NONE)
-		dev_dbg(&rproc->dev, "no message found in vq%d\n", mb->vq_id);
-}
-
-static void stm32_rproc_mb_callback(struct mbox_client *cl, void *data)
-{
-	struct rproc *rproc = dev_get_drvdata(cl->dev);
-	struct stm32_mbox *mb = container_of(cl, struct stm32_mbox, client);
-	struct stm32_rproc *ddata = rproc->priv;
-
-	queue_work(ddata->workqueue, &mb->vq_work);
-}
-
 static void stm32_rproc_free_mbox(struct rproc *rproc)
 {
 	struct stm32_rproc *ddata = rproc->priv;
@@ -313,22 +289,6 @@ static void stm32_rproc_free_mbox(struct rproc *rproc)
 }
 
 static const struct stm32_mbox stm32_rproc_mbox[MBOX_NB_MBX] = {
-	{
-		.name = STM32_MBX_VQ0,
-		.vq_id = STM32_MBX_VQ0_ID,
-		.client = {
-			.rx_callback = stm32_rproc_mb_callback,
-			.tx_block = false,
-		},
-	},
-	{
-		.name = STM32_MBX_VQ1,
-		.vq_id = STM32_MBX_VQ1_ID,
-		.client = {
-			.rx_callback = stm32_rproc_mb_callback,
-			.tx_block = false,
-		},
-	},
 	{
 		.name = STM32_MBX_SHUTDOWN,
 		.vq_id = -1,
@@ -378,10 +338,6 @@ static int stm32_rproc_request_mbox(struct rproc *rproc)
 			}
 			dev_warn(dev, "cannot get %s mbox\n", name);
 			ddata->mb[i].chan = NULL;
-		}
-		if (ddata->mb[i].vq_id >= 0) {
-			INIT_WORK(&ddata->mb[i].vq_work,
-				  stm32_rproc_mb_vq_work);
 		}
 	}
 
@@ -538,28 +494,6 @@ static int stm32_rproc_stop(struct rproc *rproc)
 	return 0;
 }
 
-static void stm32_rproc_kick(struct rproc *rproc, int vqid)
-{
-	struct stm32_rproc *ddata = rproc->priv;
-	unsigned int i;
-	int err;
-
-	if (WARN_ON(vqid >= MBOX_NB_VQ))
-		return;
-
-	for (i = 0; i < MBOX_NB_MBX; i++) {
-		if (vqid != ddata->mb[i].vq_id)
-			continue;
-		if (!ddata->mb[i].chan)
-			return;
-		err = mbox_send_message(ddata->mb[i].chan, "kick");
-		if (err < 0)
-			dev_err(&rproc->dev, "%s: failed (%s, err:%d)\n",
-				__func__, ddata->mb[i].name, err);
-		return;
-	}
-}
-
 static int stm32_rproc_da_to_pa(struct rproc *rproc,
 				u64 da, phys_addr_t *pa)
 {
@@ -638,7 +572,6 @@ static const struct rproc_ops st_rproc_ops = {
 	.stop		= stm32_rproc_stop,
 	.attach		= stm32_rproc_attach,
 	.detach		= stm32_rproc_detach,
-	.kick		= stm32_rproc_kick,
 	.load		= rproc_elf_load_segments,
 	.parse_fw	= stm32_rproc_parse_fw,
 	.find_loaded_rsc_table = rproc_elf_find_loaded_rsc_table,
@@ -823,18 +756,12 @@ static int stm32_rproc_probe(struct platform_device *pdev)
 		rproc->state = RPROC_DETACHED;
 
 	rproc->has_iommu = false;
-	ddata->workqueue = create_workqueue(dev_name(dev));
-	if (!ddata->workqueue) {
-		dev_err(dev, "cannot create workqueue\n");
-		ret = -ENOMEM;
-		goto free_resources;
-	}
 
 	platform_set_drvdata(pdev, rproc);
 
 	ret = stm32_rproc_request_mbox(rproc);
 	if (ret)
-		goto free_wkq;
+		goto free_resources;
 
 	ret = rproc_add(rproc);
 	if (ret)
@@ -844,8 +771,6 @@ static int stm32_rproc_probe(struct platform_device *pdev)
 
 free_mb:
 	stm32_rproc_free_mbox(rproc);
-free_wkq:
-	destroy_workqueue(ddata->workqueue);
 free_resources:
 	rproc_resource_cleanup(rproc);
 free_rproc:
@@ -860,7 +785,6 @@ free_rproc:
 static int stm32_rproc_remove(struct platform_device *pdev)
 {
 	struct rproc *rproc = platform_get_drvdata(pdev);
-	struct stm32_rproc *ddata = rproc->priv;
 	struct device *dev = &pdev->dev;
 
 	if (atomic_read(&rproc->power) > 0)
@@ -868,7 +792,6 @@ static int stm32_rproc_remove(struct platform_device *pdev)
 
 	rproc_del(rproc);
 	stm32_rproc_free_mbox(rproc);
-	destroy_workqueue(ddata->workqueue);
 
 	if (device_may_wakeup(dev)) {
 		dev_pm_clear_wake_irq(dev);
