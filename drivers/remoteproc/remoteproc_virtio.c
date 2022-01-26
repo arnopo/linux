@@ -74,6 +74,58 @@ static bool rproc_virtio_notify(struct virtqueue *vq)
 	return true;
 }
 
+static int
+rproc_parse_vring(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int i)
+{
+	struct rproc *rproc = rvdev->rproc;
+	struct device *dev = &rproc->dev;
+	struct fw_rsc_vdev_vring *vring = &rsc->vring[i];
+	struct rproc_vring *rvring = &rvdev->vring[i];
+
+	dev_dbg(dev, "vdev rsc: vring%d: da 0x%x, qsz %d, align %d\n",
+		i, vring->da, vring->num, vring->align);
+
+	/* verify queue size and vring alignment are sane */
+	if (!vring->num || !vring->align) {
+		dev_err(dev, "invalid qsz (%d) or alignment (%d)\n",
+			vring->num, vring->align);
+		return -EINVAL;
+	}
+
+	rvring->num = vring->num;
+	rvring->align = vring->align;
+	rvring->rvdev = rvdev;
+
+	return 0;
+}
+
+static void rproc_free_vring(struct rproc_vring *rvring)
+{
+	struct rproc *rproc = rvring->rvdev->rproc;
+	int idx = rvring - rvring->rvdev->vring;
+	struct fw_rsc_vdev *rsc;
+
+	idr_remove(&rproc->notifyids, rvring->notifyid);
+
+	/*
+	 * At this point rproc_stop() has been called and the installed resource
+	 * table in the remote processor memory may no longer be accessible. As
+	 * such and as per rproc_stop(), rproc->table_ptr points to the cached
+	 * resource table (rproc->cached_table).  The cached resource table is
+	 * only available when a remote processor has been booted by the
+	 * remoteproc core, otherwise it is NULL.
+	 *
+	 * Based on the above, reset the virtio device section in the cached
+	 * resource table only if there is one to work with.
+	 */
+	if (rproc->table_ptr) {
+		rsc = (void *)rproc->table_ptr + rvring->rvdev->rsc_offset;
+		rsc->vring[idx].da = 0;
+		rsc->vring[idx].notifyid = -1;
+	}
+}
+
+
 /**
  * rproc_vq_interrupt() - tell remoteproc that a virtqueue is interrupted
  * @rproc: handle to the remote processor
