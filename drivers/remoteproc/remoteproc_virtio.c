@@ -612,24 +612,53 @@ static void rproc_virtio_unbind(struct rproc_vdev *rvdev)
 	dev_dbg(dev, "remote proc virtio dev %d unbound\n",  rvdev->index);
 }
 
+static int rproc_virtio_of_parse(struct device *dev, struct rproc_vdev *rvdev)
+{
+	struct device_node *np = dev->of_node;
+
+	/* The reg is used to specify the vdev index */
+	if (of_property_read_u32(np, "reg", &rvdev->index))
+		return -EINVAL;
+
+	/* The virtio,id define the virtio type */
+	if (of_property_read_u32(np, "virtio,id", &rvdev->id))
+		return -EINVAL;
+
+	return 0;
+}
+
 static int rproc_virtio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct rproc_vdev_data *rvdev_data = dev->platform_data;
 	struct rproc_vdev *rvdev;
 	struct rproc *rproc = container_of(dev->parent, struct rproc, dev);
 	int ret;
-
-	if (!rvdev_data)
-		return -EINVAL;
 
 	rvdev = devm_kzalloc(dev, sizeof(*rvdev), GFP_KERNEL);
 	if (!rvdev)
 		return -ENOMEM;
 
-	rvdev->id = rvdev_data->id;
-	rvdev->rproc = rproc;
-	rvdev->index = rvdev_data->index;
+	if (dev->of_node) {
+		/*
+		 * The platform device is declared in the device tree
+		 * retrieve rproc struct through the remoteproc platform
+		 */
+		rproc = rproc_get_by_node(dev->parent->of_node);
+
+		ret = rproc_virtio_of_parse(dev, rvdev);
+		if (ret)
+			return ret;
+	} else {
+		struct rproc_vdev_data *rvdev_data = pdev->dev.platform_data;
+
+		if (!rvdev_data)
+			return -EINVAL;
+
+		rproc = container_of(dev->parent, struct rproc, dev);
+
+		rvdev->id = rvdev_data->id;
+		rvdev->index = rvdev_data->index;
+	}
 
 	ret = copy_dma_range_map(dev, rproc->dev.parent);
 	if (ret)
@@ -646,6 +675,7 @@ static int rproc_virtio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rvdev);
 	rvdev->pdev = pdev;
+	rvdev->rproc = rproc;
 
 
 	rproc_add_rvdev(rproc, rvdev);

@@ -427,7 +427,7 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 {
 	struct fw_rsc_vdev *rsc = ptr;
 	struct device *dev = &rproc->dev;
-	struct rproc_vdev *rvdev;
+	struct rproc_vdev *rvdev = NULL, *tmp_rvdev;
 	size_t rsc_size;
 	struct rproc_vdev_data rvdev_data;
 	struct platform_device *pdev;
@@ -455,29 +455,47 @@ static int rproc_handle_vdev(struct rproc *rproc, void *ptr,
 		return -EINVAL;
 	}
 
-	rvdev_data.id = rsc->id;
-	rvdev_data.index = rproc->nb_vdev++;
-
-	pdev = platform_device_register_data(dev, "rproc-virtio", rvdev_data.index, &rvdev_data,
-					     sizeof(rvdev_data));
-	if (IS_ERR(pdev)) {
-		dev_err(dev, "failed to create rproc-virtio device\n");
-		return PTR_ERR(pdev);
+	/* Try to find a pre-registered rproc virtio device declared in the device tree*/
+	list_for_each_entry(tmp_rvdev, &rproc->rvdevs, node) {
+		if (!tmp_rvdev->bound && tmp_rvdev->id == rsc->id) {
+			rvdev = tmp_rvdev;
+			break;
+		}
 	}
+	if (rvdev) {
+		/* Assign the vdev resource to the found remoteproc vdev */
+		rvdev->rsc_offset = offset;
+	} else {
+		/* No remoteproc vdev found, Register a remoteproc virtio platform device */
+		rvdev_data.id  = rsc->id;
+		rvdev_data.index  = rproc->nb_vdev;
+
+		pdev = platform_device_register_data(dev, "rproc-virtio", rvdev_data.index,
+						     &rvdev_data, sizeof(rvdev_data));
+		if (IS_ERR(pdev)) {
+			dev_err(rproc->dev.parent,
+				"failed to create rproc-virtio device\n");
+			return PTR_ERR(pdev);
+		}
+
+		dev_dbg(dev, "virtio dev %d created\n",  rproc->nb_vdev);
 
 	/*
-	 * At this point the registered remoteproc virtio platform device should have been probed.
-	 * Get the associated rproc_vdev struct to assign the vrings.
+	 * At this point the registered remoteproc virtio platform device should has been probed.
+	 * Get the associated rproc_vdev struct to assign the vrings
 	 */
-	rvdev = platform_get_drvdata(pdev);
-	if (!rvdev) {
-		ret = -EINVAL;
-		goto free_rvdev;
+		rvdev = platform_get_drvdata(pdev);
+		if (WARN_ON(!rvdev)) {
+			ret = -EINVAL;
+			goto free_rvdev;
+		}
 	}
 
 	ret = rvdev->bind(rvdev, rsc, offset);
 	if (ret)
 		goto free_rvdev;
+
+	rproc->nb_vdev++;
 
 	return 0;
 
@@ -1218,7 +1236,9 @@ void rproc_resource_cleanup(struct rproc *rproc)
 	/* clean up remote vdev entries */
 	list_for_each_entry_safe(rvdev, rvtmp, &rproc->rvdevs, node) {
 		rvdev->unbind(rvdev);
-		platform_device_unregister(rvdev->pdev);
+		/* Remove only rvdev not declared in the device tree. */
+		if (!rvdev->pdev->dev.of_node)
+			platform_device_unregister(rvdev->pdev);
 	}
 
 	rproc_coredump_cleanup(rproc);
