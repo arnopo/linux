@@ -30,6 +30,7 @@ struct rpmsg_tty_port {
 	struct tty_port		port;	 /* TTY port data */
 	int			id;	 /* TTY rpmsg index */
 	struct rpmsg_device	*rpdev;	 /* rpmsg device */
+	bool			flow_stopped; /* remodte device flow control */
 };
 
 static int rpmsg_tty_cb(struct rpmsg_device *rpdev, void *data, int len, void *priv, u32 src)
@@ -106,6 +107,9 @@ static unsigned int rpmsg_tty_write_room(struct tty_struct *tty)
 	struct rpmsg_tty_port *cport = tty->driver_data;
 	int size;
 
+	if (cport->flow_stopped)
+		return 0;
+
 	size = rpmsg_get_mtu(cport->rpdev->ept);
 	if (size < 0)
 		return 0;
@@ -118,6 +122,28 @@ static void rpmsg_tty_hangup(struct tty_struct *tty)
 	tty_port_hangup(tty->port);
 }
 
+static void rpmsg_tty_throttle(struct tty_struct *tty)
+{
+	struct rpmsg_tty_port *cport = tty->driver_data;
+	int ret;
+
+	/* Disable remote transmission */
+	ret = rpmsg_set_flow_control(cport->rpdev->ept, 0);
+	if (ret && ret != ENXIO)
+		dev_err(tty->dev, "cannot send control (%d)\n", ret);
+};
+
+static void rpmsg_tty_unthrottle(struct tty_struct *tty)
+{
+	struct rpmsg_tty_port *cport = tty->driver_data;
+	int ret;
+
+	/* Enable remote transmission */
+	ret = rpmsg_set_flow_control(cport->rpdev->ept, 1);
+	if (ret && ret != ENXIO)
+		dev_err(tty->dev, "cannot send control (%d)\n", ret);
+};
+
 static const struct tty_operations rpmsg_tty_ops = {
 	.install	= rpmsg_tty_install,
 	.open		= rpmsg_tty_open,
@@ -126,6 +152,8 @@ static const struct tty_operations rpmsg_tty_ops = {
 	.write_room	= rpmsg_tty_write_room,
 	.hangup		= rpmsg_tty_hangup,
 	.cleanup	= rpmsg_tty_cleanup,
+	.throttle	= rpmsg_tty_throttle,
+	.unthrottle	= rpmsg_tty_unthrottle,
 };
 
 static struct rpmsg_tty_port *rpmsg_tty_alloc_cport(void)
@@ -162,10 +190,37 @@ static void rpmsg_tty_destruct_port(struct tty_port *port)
 	kfree(cport);
 }
 
+static void rpmsg_tty_dtr_rts(struct tty_port *port, int raise)
+{
+	if (!port->tty)
+		return;
+
+	dev_dbg(port->tty->dev, "%s: dtr_rts state %d\n", __func__, raise);
+
+	if (raise)
+		rpmsg_tty_unthrottle(port->tty);
+	else
+		rpmsg_tty_throttle(port->tty);
+}
+
 static const struct tty_port_operations rpmsg_tty_port_ops = {
 	.destruct = rpmsg_tty_destruct_port,
+	.dtr_rts  = rpmsg_tty_dtr_rts,
 };
 
+
+static int rpmsg_tty_dsr_cts(struct rpmsg_device *rpdev, void *priv, u32 state)
+{
+	struct rpmsg_tty_port *cport = dev_get_drvdata(&rpdev->dev);
+
+	dev_dbg(&rpdev->dev, "flow control %d\n", state);
+
+	cport->flow_stopped = !state;
+
+	dev_dbg(&rpdev->dev, "low_stopped %d\n", cport->flow_stopped);
+
+	return 0;
+}
 
 static int rpmsg_tty_probe(struct rpmsg_device *rpdev)
 {
@@ -225,6 +280,7 @@ static struct rpmsg_driver rpmsg_tty_rpmsg_drv = {
 	.probe		= rpmsg_tty_probe,
 	.callback	= rpmsg_tty_cb,
 	.remove		= rpmsg_tty_remove,
+	.signals        = rpmsg_tty_dsr_cts,
 };
 
 static int __init rpmsg_tty_init(void)
