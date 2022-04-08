@@ -31,6 +31,16 @@ config RPMSG_NS
 	  channel that probes the associated RPMsg device on remote endpoint
 	  service announcement.
 
+config RPMSG_FC
+	tristate "RPMSG endpoint flow control management"
+	depends on RPMSG
+	help
+	  Say Y here to enable the support of the flow control management
+	  for the rpmsg endpoints.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called rpmsg_fc.
+
 config RPMSG_MTK_SCP
 	tristate "MediaTek SCP"
 	depends on MTK_SCP
