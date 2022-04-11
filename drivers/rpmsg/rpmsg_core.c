@@ -68,6 +68,30 @@ int rpmsg_release_channel(struct rpmsg_device *rpdev,
 EXPORT_SYMBOL(rpmsg_release_channel);
 
 /**
+ * rpmsg_channel_remote_fc() - announce remote endpoint flow control state
+ * using source and destination endpoint address info.
+ * @rpdev: rpmsg device
+ * @chinfo: channel_info
+ * @enable: state of the remote endpoint
+ *
+ * Return: 0 on success or an appropriate error value.
+ */
+int rpmsg_channel_remote_fc(struct rpmsg_device *rpdev,
+			    struct rpmsg_channel_info *chinfo,
+			    bool enable)
+{
+	if (WARN_ON(!rpdev))
+		return -EINVAL;
+	if (!rpdev->ops || !rpdev->ops->announce_remote_fc) {
+		dev_err(&rpdev->dev, "no flow control ops found\n");
+		return -ENXIO;
+	}
+
+	return rpdev->ops->announce_remote_fc(rpdev, chinfo, enable);
+}
+EXPORT_SYMBOL(rpmsg_channel_remote_fc);
+
+/**
  * rpmsg_create_ept() - create a new rpmsg_endpoint
  * @rpdev: rpmsg channel device
  * @cb: rx callback handler

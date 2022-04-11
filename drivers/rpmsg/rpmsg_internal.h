@@ -43,6 +43,9 @@ struct rpmsg_device_ops {
 
 	int (*announce_create)(struct rpmsg_device *ept);
 	int (*announce_destroy)(struct rpmsg_device *ept);
+	int (*announce_remote_fc)(struct rpmsg_device *rpdev,
+				  struct rpmsg_channel_info *chinfo,
+				  bool enable);
 };
 
 /**
@@ -87,6 +90,10 @@ struct rpmsg_device *rpmsg_create_channel(struct rpmsg_device *rpdev,
 					  struct rpmsg_channel_info *chinfo);
 int rpmsg_release_channel(struct rpmsg_device *rpdev,
 			  struct rpmsg_channel_info *chinfo);
+
+int rpmsg_channel_remote_fc(struct rpmsg_device *rpdev,
+			    struct rpmsg_channel_info *chinfo,
+			    bool enable);
 /**
  * rpmsg_ctrldev_register_device() - register a char device for control based on rpdev
  * @rpdev:	prepared rpdev to be used for creating endpoints
