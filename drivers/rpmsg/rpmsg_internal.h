@@ -79,7 +79,7 @@ struct rpmsg_endpoint_ops {
 			     void *data, int len);
 	__poll_t (*poll)(struct rpmsg_endpoint *ept, struct file *filp,
 			     poll_table *wait);
-	int (*set_flow_control)(struct rpmsg_endpoint *ept, bool enable);
+	int (*set_flow_control)(struct rpmsg_endpoint *ept, u32 dst, bool enable);
 	ssize_t (*get_mtu)(struct rpmsg_endpoint *ept);
 };
 

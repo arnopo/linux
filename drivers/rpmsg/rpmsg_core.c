@@ -357,18 +357,20 @@ EXPORT_SYMBOL(rpmsg_trysend_offchannel);
 /**
  * rpmsg_set_flow_control() - sets/clears serial flow control signals
  * @ept:	the rpmsg endpoint
+ * @addr:	the remote endpoint destination addr, set to RPMSG_ADDR_ANY to send to the default
+ *		remote endpoint associated to the rpmsg device.
  * @enable:	enable or disable serial flow control
  *
  * Return: 0 on success and an appropriate error value on failure.
  */
-int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable)
+int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, u32 dst, bool enable)
 {
 	if (WARN_ON(!ept))
 		return -EINVAL;
 	if (!ept->ops->set_flow_control)
 		return -ENXIO;
 
-	return ept->ops->set_flow_control(ept, enable);
+	return ept->ops->set_flow_control(ept, dst, enable);
 }
 EXPORT_SYMBOL(rpmsg_set_flow_control);
 

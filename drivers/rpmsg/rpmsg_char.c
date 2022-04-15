@@ -316,7 +316,7 @@ static long rpmsg_eptdev_ioctl(struct file *fp, unsigned int cmd,
 		if (ret)
 			break;
 		set = (val & TIOCM_DTR) ? true : false;
-		ret = rpmsg_set_flow_control(eptdev->ept, set);
+		ret = rpmsg_set_flow_control(eptdev->ept, eptdev->chinfo.dst, set);
 		break;
 	case RPMSG_DESTROY_EPT_IOCTL:
 		/* Don't allow to destroy a default endpoint. */

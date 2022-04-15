@@ -154,7 +154,7 @@ static ssize_t virtio_rpmsg_get_mtu(struct rpmsg_endpoint *ept);
 static struct rpmsg_device *__rpmsg_create_channel(struct virtproc_info *vrp,
 						   struct rpmsg_channel_info *chinfo);
 
-static int virtio_rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable);
+static int virtio_rpmsg_set_flow_control(struct rpmsg_endpoint *ept, u32 dst, bool enable);
 
 static const struct rpmsg_endpoint_ops virtio_endpoint_ops = {
 	.destroy_ept = virtio_rpmsg_destroy_ept,
@@ -746,7 +746,7 @@ static ssize_t virtio_rpmsg_get_mtu(struct rpmsg_endpoint *ept)
 	return vch->vrp->buf_size - sizeof(struct rpmsg_hdr);
 }
 
-static int virtio_rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable)
+static int virtio_rpmsg_set_flow_control(struct rpmsg_endpoint *ept, u32 dst, bool enable)
 {
 	struct rpmsg_device *rpdev;
 	struct virtio_rpmsg_channel *vch;
@@ -762,7 +762,7 @@ static int virtio_rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable
 		struct rpmsg_ept_msg msg;
 
 		msg.src = cpu_to_rpmsg32(rpdev, ept->addr);
-		msg.dst = cpu_to_rpmsg32(rpdev, rpdev->dst);
+		msg.dst = cpu_to_rpmsg32(rpdev, dst == RPMSG_ADDR_ANY ? rpdev->dst : dst);
 		msg.flags = cpu_to_rpmsg32(rpdev, enable ? RPMSG_EPT_ON : RPMSG_EPT_OFF);
 
 		err = rpmsg_sendto(ept, &msg, sizeof(msg), RPMSG_FC_ADDR);

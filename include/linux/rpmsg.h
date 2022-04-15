@@ -193,7 +193,7 @@ __poll_t rpmsg_poll(struct rpmsg_endpoint *ept, struct file *filp,
 
 ssize_t rpmsg_get_mtu(struct rpmsg_endpoint *ept);
 
-int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable);
+int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, u32 dst, bool enable);
 
 #else
 
@@ -313,7 +313,7 @@ static inline ssize_t rpmsg_get_mtu(struct rpmsg_endpoint *ept)
 	return -ENXIO;
 }
 
-static inline int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool enable)
+static inline int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, u32 dst, bool enable)
 {
 	/* This shouldn't be possible */
 	WARN_ON(1);

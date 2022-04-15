@@ -128,7 +128,7 @@ static void rpmsg_tty_throttle(struct tty_struct *tty)
 	int ret;
 
 	/* Disable remote transmission */
-	ret = rpmsg_set_flow_control(cport->rpdev->ept, 0);
+	ret = rpmsg_set_flow_control(cport->rpdev->ept, RPMSG_ADDR_ANY, 0);
 	if (ret && ret != ENXIO)
 		dev_err(tty->dev, "cannot send control (%d)\n", ret);
 };
@@ -139,7 +139,7 @@ static void rpmsg_tty_unthrottle(struct tty_struct *tty)
 	int ret;
 
 	/* Enable remote transmission */
-	ret = rpmsg_set_flow_control(cport->rpdev->ept, 1);
+	ret = rpmsg_set_flow_control(cport->rpdev->ept, RPMSG_ADDR_ANY, 1);
 	if (ret && ret != ENXIO)
 		dev_err(tty->dev, "cannot send control (%d)\n", ret);
 };
