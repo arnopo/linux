@@ -851,7 +851,6 @@ static struct rpmsg_device *rpmsg_virtio_add_ctrl_dev(struct virtio_device *vdev
 
 	err = rpmsg_ctrldev_register_device(rpdev_ctrl);
 	if (err) {
-		kfree(vch);
 		return ERR_PTR(err);
 	}
 
