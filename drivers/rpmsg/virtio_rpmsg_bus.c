@@ -389,18 +389,29 @@ static int virtio_rpmsg_remote_flowctrl(struct rpmsg_device *rpdev,
 
 	mutex_unlock(&vrp->endpoints_lock);
 
-	if (ept) {
-		/* make sure ept->cb doesn't go away while we use it */
-		mutex_lock(&ept->cb_lock);
+	if (!ept)
+		return -EINVAL;
 
-		if (ept->sig_cb)
-			ept->sig_cb(ept->rpdev, ept->priv, enable);
+	/*
+	 * If the endpoint is the rpmsg device default one it can not be yet associated
+	 * to the remote endpoint. this can occurs if a ns announcement message has been
+	 * previously sent to the remote side.
+	 * Update the rpmsg device destination address in such case to store the remote
+	 * address as default remote endpoint.
+	 */
+	if (rpdev->ept == ept && rpdev->dst == RPMSG_ADDR_ANY)
+		rpdev->dst = __rpmsg32_to_cpu(virtio_is_little_endian(vrp->vdev), chinfo->src);
 
-		mutex_unlock(&ept->cb_lock);
+	/* make sure ept->cb doesn't go away while we use it */
+	mutex_lock(&ept->cb_lock);
 
-		/* farewell, ept, we don't need you anymore */
-		kref_put(&ept->refcount, __ept_release);
-	}
+	if (ept->sig_cb)
+		ept->sig_cb(ept->rpdev, ept->priv, enable);
+
+	mutex_unlock(&ept->cb_lock);
+
+	/* farewell, ept, we don't need you anymore */
+	kref_put(&ept->refcount, __ept_release);
 
 	return 0;
 }
