@@ -28,14 +28,27 @@ static int shm_get_kernel_pages(unsigned long start, size_t page_count,
 	struct page *page;
 	size_t n;
 
-	if (WARN_ON_ONCE(is_vmalloc_addr((void *)start) ||
-			 is_kmap_addr((void *)start)))
+	if (WARN_ON_ONCE(is_kmap_addr((void *)start)))
 		return -EINVAL;
 
-	page = virt_to_page((void *)start);
-	for (n = 0; n < page_count; n++) {
-		pages[n] = page + n;
-		get_page(pages[n]);
+	if (is_vmalloc_addr((void *)start)) {
+		struct page *page;
+
+		for (n = 0; n < page_count; n++) {
+			page = vmalloc_to_page((void *)(start + PAGE_SIZE * n));
+			if (!page)
+				return -ENOMEM;
+
+			get_page(page);
+			pages[n] = page;
+		}
+
+	}  else {
+		page = virt_to_page((void *)start);
+		for (n = 0; n < page_count; n++) {
+			pages[n] = page + n;
+			get_page(pages[n]);
+		}
 	}
 
 	return page_count;
