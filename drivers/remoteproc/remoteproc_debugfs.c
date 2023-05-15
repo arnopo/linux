@@ -115,6 +115,39 @@ static const struct file_operations rproc_coredump_fops = {
 };
 
 /*
+ * A firmware-format-to-string lookup table, for exposing a human readable
+ * supported firmware format via sysfs. Always to keep in sync with enum
+ * rproc_fw_format.
+ */
+static const char * const rproc_format_string[] = {
+	[RPROC_FW_UNKNOWN]	= "unknown",
+	[RPROC_FW_ELF]		= "ELF",
+	[RPROC_FW_TEE]		= "TEE",
+	[RPROC_FW_LAST]		= "invalid",
+};
+
+/* Expose the format of the remote processor binary firmware via sysfs */
+static ssize_t fw_format_read(struct file *filp, char __user *userbuf, size_t count, loff_t *ppos)
+{
+	struct rproc *rproc = filp->private_data;
+	unsigned int fw_format;
+	char buf[20];
+	int i;
+
+	fw_format = rproc->fw_format > RPROC_FW_LAST ? RPROC_FW_LAST : rproc->fw_format;
+
+	i = scnprintf(buf, sizeof(buf), "%.18s\n", rproc_format_string[fw_format]);
+
+	return simple_read_from_buffer(userbuf, count, ppos, buf, i);
+}
+
+static const struct file_operations rproc_fw_format_fops = {
+	.read = fw_format_read,
+	.open = simple_open,
+	.llseek = generic_file_llseek,
+};
+
+/*
  * Some remote processors may support dumping trace logs into a shared
  * memory buffer. We expose this trace buffer using debugfs, so users
  * can easily tell what's going on remotely.
@@ -416,6 +449,8 @@ void rproc_create_debug_dir(struct rproc *rproc)
 			    rproc, &rproc_carveouts_fops);
 	debugfs_create_file("coredump", 0600, rproc->dbg_dir,
 			    rproc, &rproc_coredump_fops);
+	debugfs_create_file("fw_format", 0400, rproc->dbg_dir,
+			    rproc, &rproc_fw_format_fops);
 }
 
 void __init rproc_init_debugfs(void)
