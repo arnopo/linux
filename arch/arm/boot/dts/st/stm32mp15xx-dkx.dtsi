@@ -454,6 +454,8 @@
 
 &ipcc {
 	status = "okay";
+	#interrupt-cells = <1>;
+	interrupt-controller;
 };
 
 &iwdg2 {
