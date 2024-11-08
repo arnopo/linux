@@ -21,10 +21,9 @@
 #include <linux/slab.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
+#include <linux/virtio_msg.h>
 #include <linux/virtio_ring.h>
 #include <uapi/linux/virtio_mmio.h>
-
-#include "virtio_msg.h"
 
 struct virtio_msg_mmio_device {
 	struct virtio_msg_device vmdev;

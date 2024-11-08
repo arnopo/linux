@@ -17,8 +17,7 @@
 #define _DRIVERS_VIRTIO_VIRTIO_MSG_AMP_H
 
 #include <linux/device.h>
-
-#include "virtio_msg.h"
+#include <linux/virtio_msg.h>
 
 #include "spsc_queue.h"
 

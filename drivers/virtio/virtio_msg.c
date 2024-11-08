@@ -19,10 +19,10 @@
 #include <linux/spinlock.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
+#include <linux/virtio_msg.h>
 #include <linux/virtio_ring.h>
 #include <uapi/linux/virtio_msg.h>
 
-#include "virtio_msg.h"
 
 #define U24_MAX				((1 << 24) - 1)
 #define to_virtio_msg_device(_dev)	container_of(_dev, struct virtio_msg_device, vdev)
