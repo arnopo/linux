@@ -23,6 +23,15 @@ config REMOTEPROC_CDEV
 
 	  It's safe to say N if you don't want to use this interface.
 
+config REMOTEPROC_VIRTIO_MSG
+	tristate "Remoteproc virtio msg bus support"
+	select MAILBOX
+	select VIRTIO_MSG
+	help
+	  Say y here to support the virtio msg protocol  with a remote processor.
+
+	  It's safe to say N if you don't want to use this interface.
+
 config IMX_REMOTEPROC
 	tristate "i.MX remoteproc support"
 	depends on ARCH_MXC
