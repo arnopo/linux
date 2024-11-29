@@ -15,34 +15,132 @@
 
 #include <linux/limits.h>
 #include <linux/list.h>
+#include <linux/miscdevice.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
-#include <linux/virtio_msg.h>
 #include <linux/virtio_ring.h>
 #include <uapi/linux/virtio_msg.h>
 
+#include <linux/virtio_msg.h>
 
-#define U24_MAX				((1 << 24) - 1)
-#define to_virtio_msg_device(_dev)	container_of(_dev, struct virtio_msg_device, vdev)
+#define U24_MAX					((1 << 24) - 1)
+#define to_virtio_msg_device(_dev)		container_of(_dev, struct virtio_msg_device, vdev)
+#define to_virtio_msg_user_device(_misc)	container_of(_misc, struct virtio_msg_user_device, misc)
 
-static void virtio_msg_prepare(struct virtio_msg *msg, bool request, u8 msg_id,
-			       u16 dev_id)
+static ssize_t vmsg_miscdev_read(struct file *file, char __user *buf,
+				 size_t count, loff_t *pos)
+{
+	struct miscdevice *misc = file->private_data;
+	struct virtio_msg_user_device *vmudev = to_virtio_msg_user_device(misc);
+	int ret;
+
+	if (count != VIRTIO_MSG_MAX_SIZE) {
+		dev_err(vmudev->parent, "Trying to read message of incorrect size: %ld\n",
+			count);
+		return 0;
+	}
+
+	/* Wait to receive a message from the guest */
+	ret = virtio_msg_async_wait(&vmudev->async, vmudev->parent, 0);
+	if (ret < 0)
+		return 0;
+
+	BUG_ON(!vmudev->msg);
+
+	/* The "msg" pointer is filled by the bus driver before waking up */
+	if (copy_to_user(buf, vmudev->msg, count) != 0)
+		return 0;
+
+	vmudev->msg = NULL;
+
+	return count;
+}
+
+static ssize_t vmsg_miscdev_write(struct file *file, const char __user *buf,
+				  size_t count, loff_t *pos)
+{
+	struct miscdevice *misc = file->private_data;
+	struct virtio_msg_user_device *vmudev = to_virtio_msg_user_device(misc);
+	struct virtio_msg msg;
+
+	if (count != VIRTIO_MSG_MAX_SIZE) {
+		dev_err(vmudev->parent, "Trying to write message of incorrect size: %ld\n",
+			count);
+		return 0;
+	}
+
+	if (copy_from_user(&msg, buf, count) != 0)
+		return 0;
+
+	vmudev->ops->send(vmudev, &msg);
+
+	return count;
+}
+
+static const struct file_operations vmsg_miscdev_fops = {
+	.owner = THIS_MODULE,
+	.read = vmsg_miscdev_read,
+	.write = vmsg_miscdev_write,
+};
+
+int virtio_msg_user_register(struct virtio_msg_user_device *vmudev)
+{
+	static u8 vmsg_user_device_count = 0;
+	int ret;
+
+	if (!vmudev || !vmudev->ops)
+		return -EINVAL;
+
+	virtio_msg_async_init(&vmudev->async);
+
+	vmudev->misc.parent = vmudev->parent;
+	vmudev->misc.minor = MISC_DYNAMIC_MINOR;
+	vmudev->misc.fops = &vmsg_miscdev_fops;
+	vmudev->misc.name = vmudev->name;
+	sprintf(vmudev->name, "virtio-msg-%d", vmsg_user_device_count);
+
+	ret = misc_register(&vmudev->misc);
+	if (ret)
+		return ret;
+
+	vmsg_user_device_count++;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(virtio_msg_user_register);
+
+void virtio_msg_user_unregister(struct virtio_msg_user_device *vmudev)
+{
+	misc_deregister(&vmudev->misc);
+}
+EXPORT_SYMBOL_GPL(virtio_msg_user_unregister);
+
+void virtio_msg_prepare(struct virtio_msg *msg, bool bus, u8 msg_id, u16 dev_id)
 {
 	/* Initialize all fields (including padding) to 0 */
 	memset(msg, 0, sizeof(*msg));
 
-	if (!request)
-		msg->type = VIRTIO_MSG_TYPE_RESPONSE;
+	if (bus) {
+		msg->type = VIRTIO_MSG_TYPE_BUS;
+	} else {
+		msg->type = VIRTIO_MSG_TYPE_VIRTIO;
+		msg->dev_id = cpu_to_le16(dev_id);
+	}
 
 	msg->id = msg_id;
-	msg->dev_id = cpu_to_le16(dev_id);
+}
+EXPORT_SYMBOL_GPL(virtio_msg_prepare);
+
+static void vmsg_prepare(struct virtio_msg *msg, u8 msg_id, u16 dev_id)
+{
+	virtio_msg_prepare(msg, false, msg_id, dev_id);
 }
 
-static void virtio_request_prepare(struct virtio_msg *msg, u8 msg_id, u16 dev_id)
+static int vmsg_send(struct virtio_msg_device *vmdev,
+		     struct virtio_msg *request, struct virtio_msg *response)
 {
-	virtio_msg_prepare(msg, true, msg_id, dev_id);
+	return vmdev->ops->send(vmdev, request, response);
 }
 
 static int vmsg_get_device_info(struct virtio_msg_device *vmdev)
@@ -50,9 +148,9 @@ static int vmsg_get_device_info(struct virtio_msg_device *vmdev)
 	struct virtio_msg request, response;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_DEVICE_INFO, 0);
+	vmsg_prepare(&request, VIRTIO_MSG_DEVICE_INFO, vmdev->dev_id);
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0)
 		return ret;
 
@@ -77,10 +175,10 @@ static u64 vmsg_get_features(struct virtio_device *vdev)
 	struct virtio_msg request, response;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_GET_FEATURES, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_GET_FEATURES, vmdev->dev_id);
 	request.get_features.index = 0;
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0)
 		return ret;
 
@@ -96,11 +194,11 @@ static int vmsg_finalize_features(struct virtio_device *vdev)
 	/* Give virtio_ring a chance to accept features. */
 	vring_transport_features(vdev);
 
-	virtio_request_prepare(&request, VIRTIO_MSG_SET_FEATURES, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_SET_FEATURES, vmdev->dev_id);
 	request.set_features.index = 0;
 	request.set_features.features[0]= cpu_to_le64(vmdev->vdev.features);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0)
 		return ret;
 
@@ -119,7 +217,7 @@ static void vmsg_get(struct virtio_device *vdev, unsigned int offset,
 	BUG_ON(offset > U24_MAX);
 	BUG_ON(len > 8);
 
-	virtio_request_prepare(&request, VIRTIO_MSG_GET_CONFIG, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_GET_CONFIG, vmdev->dev_id);
 
 	offset = cpu_to_le32(offset);
 	request.get_config.offset[0] = (u8) offset;
@@ -127,9 +225,9 @@ static void vmsg_get(struct virtio_device *vdev, unsigned int offset,
 	request.get_config.offset[2] = (u8) (offset >> 16);
 	request.get_config.size = (u8) len;
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vdev->dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return;
 	}
 
@@ -149,7 +247,7 @@ static void vmsg_set(struct virtio_device *vdev, unsigned int offset,
 	BUG_ON(offset > U24_MAX);
 	BUG_ON(len > 8);
 
-	virtio_request_prepare(&request, VIRTIO_MSG_SET_CONFIG, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_SET_CONFIG, vmdev->dev_id);
 
 	offset = cpu_to_le32(offset);
 	request.set_config.offset[0] = (u8) offset;
@@ -160,9 +258,9 @@ static void vmsg_set(struct virtio_device *vdev, unsigned int offset,
 	memcpy(&data, buf, len);
 	request.set_config.data[0] = le64_to_cpu(data);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vdev->dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return;
 	}
 }
@@ -173,11 +271,11 @@ static u32 vmsg_generation(struct virtio_device *vdev)
 	struct virtio_msg request, response;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_GET_CONFIG_GEN, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_GET_CONFIG_GEN, vmdev->dev_id);
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vdev->dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return 0;
 	}
 
@@ -190,11 +288,11 @@ static u8 vmsg_get_status(struct virtio_device *vdev)
 	struct virtio_msg request, response;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_GET_DEVICE_STATUS, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_GET_DEVICE_STATUS, vmdev->dev_id);
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vdev->dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return 0;
 	}
 
@@ -207,12 +305,12 @@ static void vmsg_set_status(struct virtio_device *vdev, u8 status)
 	struct virtio_msg request;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_SET_DEVICE_STATUS, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_SET_DEVICE_STATUS, vmdev->dev_id);
 	request.set_device_status.status = cpu_to_le32(status);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0)
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vdev->dev, "%s: Failed to send request (%d)\n", __func__, ret);
 }
 
 static void vmsg_reset(struct virtio_device *vdev)
@@ -227,12 +325,12 @@ static bool vmsg_notify(struct virtqueue *vq)
 	struct virtio_msg request;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_EVENT_AVAIL, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_EVENT_AVAIL, vmdev->dev_id);
 	request.event_avail.index = cpu_to_le32(vq->index);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vmdev->vdev.dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return false;
 	}
 
@@ -246,16 +344,16 @@ static bool vmsg_notify_with_data(struct virtqueue *vq)
 	struct virtio_msg request;
 	int ret;
 
-	virtio_request_prepare(&request, VIRTIO_MSG_EVENT_AVAIL, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_EVENT_AVAIL, vmdev->dev_id);
 	request.event_avail.index = cpu_to_le32(data | 0xFFFF);
 	data >>= 16;
 
-	request.event_avail.next_offset = cpu_to_le64(data | 0x7FFF);
-	request.event_avail.next_wrap = cpu_to_le64(data >> 15);
+	request.event_avail.next_offset = cpu_to_le32(data | 0x7FFF);
+	request.event_avail.next_wrap = cpu_to_le32(data >> 15);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vmdev->vdev.dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return false;
 	}
 
@@ -293,10 +391,10 @@ int virtio_msg_receive(struct virtio_msg_device *vmdev, struct virtio_msg *msg)
 
 		if (!handled) {
 			ret = -EINVAL;
-			pr_err("%s: Failed to find virtqueue for message (%u)", __func__, index);
+			dev_err(&vmdev->vdev.dev, "%s: Failed to find virtqueue for message (%u)", __func__, index);
 		}
 	} else {
-		pr_err("%s: Unexpected message id: (%u)\n", __func__, msg->id);
+		dev_err(&vmdev->vdev.dev, "%s: Unexpected message id: (%u)\n", __func__, msg->id);
 		ret = -EINVAL;
 	}
 
@@ -317,12 +415,12 @@ static void vmsg_del_vq(struct virtqueue *vq)
 	spin_unlock_irqrestore(&vmdev->lock, flags);
 
 	/* Reset the virtqueue */
-	virtio_request_prepare(&request, VIRTIO_MSG_RESET_VQUEUE, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_RESET_VQUEUE, vmdev->dev_id);
 	request.reset_vqueue.index = cpu_to_le32(vq->index);
 
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0)
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vmdev->vdev.dev, "%s: Failed to send request (%d)\n", __func__, ret);
 
 	vring_del_virtqueue(vq);
 
@@ -337,15 +435,8 @@ static void vmsg_del_vqs(struct virtio_device *vdev)
 	list_for_each_entry_safe(vq, n, &vmdev->vdev.vqs, list)
 		vmsg_del_vq(vq);
 
-	vmdev->ops->release_vqs(vmdev);
-}
-
-
-static u64* va_get(u64 pa) {
-	u64 *va;
-
-	va = (u64*) phys_to_virt( (phys_addr_t) pa);
-	return va;
+	if (vmdev->ops->release_vqs)
+		vmdev->ops->release_vqs(vmdev);
 }
 
 static struct virtqueue *vmsg_setup_vq(struct virtio_msg_device *vmdev,
@@ -367,16 +458,16 @@ static struct virtqueue *vmsg_setup_vq(struct virtio_msg_device *vmdev,
 		notify = vmsg_notify;
 
 	/* Get virtqueue max size from device */
-	virtio_request_prepare(&request, VIRTIO_MSG_GET_VQUEUE, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_GET_VQUEUE, vmdev->dev_id);
 	request.get_vqueue.index = cpu_to_le32(index);
 
-	ret = vmdev->ops->send(vmdev, &request, &response);
+	ret = vmsg_send(vmdev, &request, &response);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vmdev->vdev.dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		return ERR_PTR(ret);
 	}
 
-	num = le64_to_cpu(response.get_vqueue_resp.max_size);
+	num = le32_to_cpu(response.get_vqueue_resp.max_size);
 	if (!num)
 		return ERR_PTR(-ENOENT);
 
@@ -395,47 +486,16 @@ static struct virtqueue *vmsg_setup_vq(struct virtio_msg_device *vmdev,
 	vq->num_max = num;
 
 	/* Send virtqueue configuration to the device */
-	virtio_request_prepare(&request, VIRTIO_MSG_SET_VQUEUE, vmdev->dev_id);
+	vmsg_prepare(&request, VIRTIO_MSG_SET_VQUEUE, vmdev->dev_id);
 	request.set_vqueue.index = cpu_to_le32(index);
-	request.set_vqueue.size = cpu_to_le32(virtqueue_get_vring_size(vq));
+	request.set_vqueue.size = cpu_to_le64(virtqueue_get_vring_size(vq));
 	request.set_vqueue.descriptor_addr = cpu_to_le64(virtqueue_get_desc_addr(vq));
 	request.set_vqueue.driver_addr = cpu_to_le64(virtqueue_get_avail_addr(vq));
 	request.set_vqueue.device_addr = cpu_to_le64(virtqueue_get_used_addr(vq));
 
-	pr_err("%s: VQ set index=%d, size=%d, "
-		"desc_addr=%08llx driver_addr=%08llx device_addr=%08llx \n",
-		__func__,
-		request.set_vqueue.index,
-		request.set_vqueue.size,
-		request.set_vqueue.descriptor_addr,
-		request.set_vqueue.driver_addr,
-		request.set_vqueue.device_addr);
-
-	pr_err("%s: VQ set (VA), "
-		"desc_va=%px driver_va=%px device_va=%px \n",
-		__func__,
-		va_get(request.set_vqueue.descriptor_addr),
-		va_get(request.set_vqueue.driver_addr),
-		va_get(request.set_vqueue.device_addr));
-
-	/* this only works if virtqueues are using PA */
-#if 0
-	u64* p = va_get(request.set_vqueue.descriptor_addr);
-	int i;
-	for ( i=0; i < 0x1000; i++, p++)
-		p[i] =0xABCD1230;
-
-	pr_err("%s: VQ set data, "
-		"desc[0]=%08llx driver[0]=%08llx device[0]=%08llx \n",
-		__func__,
-		*va_get(request.set_vqueue.descriptor_addr),
-		*va_get(request.set_vqueue.driver_addr),
-		*va_get(request.set_vqueue.device_addr));
-#endif
-
-	ret = vmdev->ops->send(vmdev, &request, NULL);
+	ret = vmsg_send(vmdev, &request, NULL);
 	if (ret < 0) {
-		pr_err("%s: Failed to send request (%d)\n", __func__, ret);
+		dev_err(&vmdev->vdev.dev, "%s: Failed to send request (%d)\n", __func__, ret);
 		goto del_vq;
 	}
 
@@ -463,9 +523,11 @@ static int vmsg_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 	struct virtio_msg_device *vmdev = to_virtio_msg_device(vdev);
 	int i, ret, queue_idx = 0;
 
-	ret = vmdev->ops->prepare_vqs(vmdev);
-	if (ret)
-		return ret;
+	if (vmdev->ops->prepare_vqs) {
+		ret = vmdev->ops->prepare_vqs(vmdev);
+		if (ret)
+			return ret;
+	}
 
 	for (i = 0; i < nvqs; ++i) {
 		struct virtqueue_info *vqi = &vqs_info[i];
@@ -506,7 +568,8 @@ static void virtio_msg_release_dev(struct device *_d)
 			container_of(_d, struct virtio_device, dev);
 	struct virtio_msg_device *vmdev = to_virtio_msg_device(vdev);
 
-	vmdev->ops->release(vmdev);
+	if (vmdev->ops->release)
+		vmdev->ops->release(vmdev);
 }
 
 static struct virtio_config_ops virtio_msg_config_ops = {
@@ -529,14 +592,15 @@ int virtio_msg_register(struct virtio_msg_device *vmdev)
 
 	/*
 	 * Field expected to be filled by underlying architecture specific
-	 * transport layer are vmdev->data (optional), vmdev->ops,
-	 *  vmdev->dev_id, and vmdev->vdev.dev.parent.
+	 * transport layer are vmdev->data (optional), vmdev->ops, and
+	 * vmdev->vdev.dev.parent.
 	 */
-	if (!vmdev || !vmdev->ops) {
+	if (!vmdev || !vmdev->ops || !vmdev->ops->send) {
 		ret = -EINVAL;
 		goto out;
 	}
 
+	virtio_msg_async_init(&vmdev->async);
 	vmdev->vdev.config = &virtio_msg_config_ops;
 	vmdev->vdev.dev.release = virtio_msg_release_dev;
 	INIT_LIST_HEAD(&vmdev->virtqueues);

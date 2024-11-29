@@ -41,6 +41,7 @@
 #define VIRTIO_MSG_MAX_SIZE		40
 
 #define VIRTIO_MSG_TYPE_RESPONSE	(1 << 0)
+#define VIRTIO_MSG_TYPE_VIRTIO		(0 << 1)
 #define VIRTIO_MSG_TYPE_BUS		(1 << 1)
 
 /* Message payload format */
@@ -111,11 +112,25 @@ struct get_vqueue {
 
 struct get_vqueue_resp {
 	__le32 index;
-	__le64 max_size;
+	__le32 max_size;
+	__le32 size;
+	__le64 descriptor_addr;
+	__le64 driver_addr;
+	__le64 device_addr;
 } __attribute__((packed));
 
 struct set_vqueue {
 	__le32 index;
+	__le32 unused;
+	__le32 size;
+	__le64 descriptor_addr;
+	__le64 driver_addr;
+	__le64 device_addr;
+} __attribute__((packed));
+
+struct set_vqueue_resp {
+	__le32 index;
+	__le32 unused;
 	__le32 size;
 	__le64 descriptor_addr;
 	__le64 driver_addr;
@@ -135,8 +150,8 @@ struct event_config {
 
 struct event_avail {
 	__le32 index;
-	__le64 next_offset;
-	__le64 next_wrap;
+	__le32 next_offset;
+	__le32 next_wrap;
 } __attribute__((packed));
 
 struct event_used {
@@ -166,6 +181,7 @@ struct virtio_msg {
 		struct get_vqueue get_vqueue;
 		struct get_vqueue_resp get_vqueue_resp;
 		struct set_vqueue set_vqueue;
+		struct set_vqueue_resp set_vqueue_resp;
 		struct reset_vqueue reset_vqueue;
 		struct event_config event_config;
 		struct event_avail event_avail;

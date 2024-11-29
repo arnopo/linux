@@ -17,12 +17,15 @@
 #ifndef _DRIVERS_VIRTIO_VIRTIO_MSG_H
 #define _DRIVERS_VIRTIO_VIRTIO_MSG_H
 
+#include <linux/device.h>
 #include <linux/list.h>
+#include <linux/miscdevice.h>
 #include <linux/pm.h>
 #include <linux/spinlock.h>
 #include <linux/virtio.h>
 #include <uapi/linux/virtio_msg.h>
 
+struct page;
 struct virtio_msg_device;
 
 /**
@@ -38,6 +41,17 @@ struct virtio_msg_ops {
 	void (*release)(struct virtio_msg_device *vmdev);
 	int (*prepare_vqs)(struct virtio_msg_device *vmdev);
 	void (*release_vqs)(struct virtio_msg_device *vmdev);
+	int (*mem_share)(struct virtio_msg_device *vmdev, struct page **pages,
+			 size_t num_pages);
+	int (*mem_unshare)(struct virtio_msg_device *vmdev, struct page **pages,
+			   size_t num_pages);
+};
+
+/**
+ * struct virtio_msg_async - async transfer infrastructure
+ */
+struct virtio_msg_async {
+	struct completion completion;
 };
 
 /**
@@ -46,9 +60,8 @@ struct virtio_msg_ops {
 struct virtio_msg_device {
 	struct virtio_device vdev;
 	struct virtio_msg_ops *ops;
-	const void *data;
-
-	/* device id on the virtio-msg-bus */
+	struct virtio_msg_async async;
+	void *priv;
 	u16 dev_id;
 
 	/* a list of queues so we can dispatch IRQs */
@@ -76,5 +89,72 @@ static inline int virtio_msg_restore(struct virtio_msg_device *vmdev)
 int virtio_msg_receive(struct virtio_msg_device *vmdev, struct virtio_msg *msg);
 int virtio_msg_register(struct virtio_msg_device *vmdev);
 void virtio_msg_unregister(struct virtio_msg_device *vmdev);
+
+void virtio_msg_prepare(struct virtio_msg *msg, bool bus, u8 msg_id, u16 dev_id);
+
+static inline void virtio_msg_async_init(struct virtio_msg_async *async)
+{
+	init_completion(&async->completion);
+}
+
+static inline int virtio_msg_async_wait(struct virtio_msg_async *async,
+		struct device *dev, unsigned long timeout)
+{
+	int ret;
+
+	if (timeout)
+		ret = wait_for_completion_interruptible_timeout(&async->completion, timeout);
+	else
+		ret = wait_for_completion_interruptible(&async->completion);
+
+	if (ret < 0) {
+		dev_err(dev, "Interrupted while waiting for response: %d\n", ret);
+	} else if (timeout && !ret) {
+		dev_err(dev, "Timed out waiting for response\n");
+		ret = -ETIMEDOUT;
+	} else {
+		ret = 0;
+	}
+
+	return ret;
+}
+
+static inline void virtio_msg_async_wait_nosleep(struct virtio_msg_async *async)
+{
+	while (!try_wait_for_completion(&async->completion))
+		cpu_relax();
+}
+
+static inline void virtio_msg_async_complete(struct virtio_msg_async *async)
+{
+	complete(&async->completion);
+}
+
+#ifdef CONFIG_VIRTIO_MSG_DMA_OPS
+extern const struct dma_map_ops virtio_msg_dma_ops;
+#endif
+
+/* Virtio msg userspace interface */
+struct virtio_msg_user_device;
+
+struct virtio_msg_user_ops {
+	int (*send)(struct virtio_msg_user_device *vmudev, struct virtio_msg *msg);
+};
+
+/**
+ * struct virtio_msg_user_device - host side device using virtio message
+ */
+struct virtio_msg_user_device {
+	struct virtio_msg_user_ops *ops;
+	struct miscdevice misc;
+	struct virtio_msg_async async;
+	struct virtio_msg *msg;
+	struct device *parent;
+	char name[15];
+	void *priv;
+};
+
+int virtio_msg_user_register(struct virtio_msg_user_device *vmudev);
+void virtio_msg_user_unregister(struct virtio_msg_user_device *vmudev);
 
 #endif /* _DRIVERS_VIRTIO_VIRTIO_MSG_H */
