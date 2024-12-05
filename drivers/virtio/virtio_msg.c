@@ -194,6 +194,7 @@ static int vmsg_finalize_features(struct virtio_device *vdev)
 	/* Give virtio_ring a chance to accept features. */
 	vring_transport_features(vdev);
 
+	__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
 	vmsg_prepare(&request, VIRTIO_MSG_SET_FEATURES, vmdev->dev_id);
 	request.set_features.index = 0;
 	request.set_features.features[0]= cpu_to_le64(vmdev->vdev.features);
